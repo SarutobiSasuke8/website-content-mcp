@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.cache/
+*.log
+coverage/
+
+# Local build task artifacts (not part of the public project)
+BUILD_BRIEF.md
+BUILD_REPORT.md

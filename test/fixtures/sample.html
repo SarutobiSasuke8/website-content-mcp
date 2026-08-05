@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sample Article — Test Fixture</title>
+    <link rel="canonical" href="https://example.com/articles/sample" />
+    <style>.hidden { display: none; }</style>
+    <script>console.log("this should never appear in markdown");</script>
+  </head>
+  <body>
+    <header>
+      <nav><a href="/">Home</a> · <a href="/about">About</a></nav>
+    </header>
+    <main>
+      <article>
+        <h1>Understanding Agent-Readable Content</h1>
+        <p>
+          This is the <strong>main body</strong> of the article. Agents should
+          receive this text as clean markdown, not raw HTML soup.
+        </p>
+        <h2>Why Markdown</h2>
+        <p>Markdown is compact and easy for language models to parse.</p>
+        <ul>
+          <li>First key point about extraction.</li>
+          <li>Second key point about caching.</li>
+        </ul>
+        <p>A link to <a href="https://example.com/docs">the documentation</a>.</p>
+      </article>
+    </main>
+    <footer>
+      <p>Copyright notice and unrelated footer navigation that should be stripped.</p>
+    </footer>
+    <script>window.analytics && window.analytics.track("page");</script>
+  </body>
+</html>
