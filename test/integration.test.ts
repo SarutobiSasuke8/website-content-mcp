@@ -13,8 +13,15 @@ import { createRuntime } from "../src/runtime.js";
  *
  * example.com has no sitemap.xml/robots.txt, so it also verifies the
  * "configured page list" discovery fallback.
+ *
+ * Opt-in. This test reaches the real network, so it is skipped by default and
+ * in CI: a third-party outage is not a defect in this server. Run it with
+ * RUN_LIVE_TESTS=1 when you want end-to-end confirmation against a live site.
  */
-void test("live integration against example.com", { timeout: 30_000 }, async () => {
+void test("live integration against example.com", {
+  timeout: 30_000,
+  skip: process.env.RUN_LIVE_TESTS === "1" ? false : "set RUN_LIVE_TESTS=1 to run",
+}, async () => {
   const cacheDir = await mkdtemp(path.join(os.tmpdir(), "wcm-int-"));
   try {
     const config = loadConfig({
