@@ -2,11 +2,9 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 
-export interface ExtractedContent {
-  title?: string;
-  canonicalUrl?: string;
-  markdown: string;
-}
+import type { ExtractedContent } from "./types.js";
+
+export type { ExtractedContent };
 
 const NON_CONTENT_TAGS = ["script", "style", "noscript", "nav", "footer", "header", "aside", "form", "iframe"];
 

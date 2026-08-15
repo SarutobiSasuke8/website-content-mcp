@@ -66,6 +66,36 @@ void test("stats report entry count, byte size and newest fetch time", async () 
   }
 });
 
+void test("prune evicts oldest entries beyond maxEntries", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "wcm-cache-"));
+  try {
+    const cache = new DiskCache(dir, 3_600, 2);
+    await cache.set(record("https://example.com/old", "2026-08-01T00:00:00.000Z"));
+    await cache.set(record("https://example.com/mid", "2026-08-02T00:00:00.000Z"));
+    await cache.set(record("https://example.com/new", "2026-08-03T00:00:00.000Z"));
+
+    const stats = await cache.stats();
+    assert.equal(stats.entries, 2, "cache stays within its bound");
+    assert.equal(await cache.read("https://example.com/old"), undefined, "oldest entry is evicted");
+    assert.ok(await cache.read("https://example.com/new"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test("maxEntries of zero leaves the cache unbounded", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "wcm-cache-"));
+  try {
+    const cache = new DiskCache(dir, 3_600, 0);
+    for (let i = 0; i < 5; i++) {
+      await cache.set(record(`https://example.com/${i}`, `2026-08-0${i + 1}T00:00:00.000Z`));
+    }
+    assert.equal((await cache.stats()).entries, 5);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 void test("ttl of zero always misses (cache disabled)", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "wcm-cache-"));
   try {

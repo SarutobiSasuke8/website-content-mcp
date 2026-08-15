@@ -1,6 +1,6 @@
 {
   "name": "website-content-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server exposing website content in agent-readable structured form.",
   "license": "MIT",
   "homepage": "https://github.com/SarutobiSasuke8/website-content-mcp#readme",
@@ -42,7 +42,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@modelcontextprotocol/express": "2.0.0",
