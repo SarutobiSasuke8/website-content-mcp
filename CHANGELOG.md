@@ -3,6 +3,15 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-08-16
+
+### Documentation
+
+- Reworked the README around practical outcomes, a first-run path, an agent
+  workflow and an accurate `content_get_page` result shape.
+- Clarified stdio versus HTTP transport choices and the product's position as a
+  site-scoped, self-hosted content layer rather than a generic scraper.
+
 ## [0.3.0] — 2026-08-16
 
 ### Security

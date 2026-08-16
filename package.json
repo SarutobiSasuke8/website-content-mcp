@@ -1,6 +1,6 @@
 {
   "name": "@sarutobi-sasuke/website-content-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server exposing website content in agent-readable structured form.",
   "license": "MIT",
   "homepage": "https://github.com/SarutobiSasuke8/website-content-mcp#readme",

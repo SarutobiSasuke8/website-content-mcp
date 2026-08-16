@@ -1,13 +1,65 @@
 # website-content-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that exposes a website's content
-in **agent-readable structured form**. Instead of scraping raw HTML, agents
-(Claude, Codex, or any MCP client) pull clean markdown and structured metadata
-through a small set of tools.
+Give an AI agent a reliable, site-scoped view of a website: clean content now,
+and deterministic evidence when it changes. It is a free, self-hosted
+[MCP](https://modelcontextprotocol.io) server—not a general-purpose scraper—so
+the agent only reads the website you configure, respects `robots.txt`, and can
+show the hash and HTTP validators behind a result.
 
-The server fetches pages from a configurable target site, strips them to clean
-markdown, caches results to disk, respects `robots.txt`, and rate-limits requests
-to be a polite citizen of the web.
+## What you can do
+
+- **Monitor a site with evidence.** Read selected competitor or market pages on
+  a schedule in a separate workflow, then compare content hashes, `ETag`s,
+  prices and availability facts before alerting a human or agent.
+- **Keep an agent current on your own site.** Let a support, sales or content
+  agent list pages, fetch the current Markdown, and answer from what is live
+  rather than from a stale upload.
+- **Build a research foundation.** Turn a site's sitemap and page content into
+  a bounded, attributable input for briefs, audits, catalog analysis or change
+  review—without granting the agent arbitrary web-fetch access.
+
+Unlike Firecrawl and generic scraping APIs, this project is site-scoped,
+robots-compliant, deterministic about change evidence, self-hosted and free.
+It is the content-access layer; scheduling, snapshots, diffs and alerts belong
+in the workflow you build around it.
+
+## Quick start: one minute to useful search
+
+Use **stdio** for a local desktop agent. Add this to its MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "website-content": {
+      "command": "npx",
+      "args": ["-y", "-p", "@sarutobi-sasuke/website-content-mcp", "website-content-stdio"],
+      "env": { "SITE_BASE_URL": "https://example.com" }
+    }
+  }
+}
+```
+
+Then ask the agent to call `content_refresh` once. When it finishes, ask it to
+call `content_search` for a topic. The cache begins empty, so search has no
+pages to search until you refresh it or fetch pages individually.
+
+Use **HTTP** when several approved remote agents need a shared endpoint. The
+public HTTP transport is deliberately read-only: populate search with
+`STARTUP_REFRESH_LIMIT` or a restricted operator endpoint rather than exposing
+`content_refresh` anonymously.
+
+## A real agent flow
+
+> **Prompt:** “Summarize what is new on astraeus.ie.”
+>
+> 1. The agent calls `content_list_pages` to discover the site structure.
+> 2. It calls `content_get_page` for the relevant current pages.
+> 3. It summarizes the returned Markdown and cites the source URLs, retaining
+>    `contentHash`, `ETag` and `fetchedAt` for the next comparison.
+
+For a recurring change workflow, persist those deterministic fields outside the
+MCP server, re-read the same pages later, and only ask AI to classify or
+summarize a verified difference.
 
 ## Features
 
@@ -19,6 +71,34 @@ to be a polite citizen of the web.
 - **Polite by default** — respects `robots.txt` disallow rules, rate-limits to ~1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
 - **Scoped to one site** — fetches are refused for any host outside the configured site.
 - **Two transports** — Streamable HTTP and stdio.
+
+## What a page result looks like
+
+`content_get_page` returns clean Markdown plus compact metadata that another
+workflow can retain for comparison. Fields are omitted when the source does not
+provide them.
+
+```json
+{
+  "url": "https://shop.example/products/blue-widget",
+  "title": "Blue Widget",
+  "canonicalUrl": "https://shop.example/products/blue-widget",
+  "markdown": "# Blue Widget\n\nA useful blue widget.",
+  "contentHash": "8f3c...64-character-sha256...a91d",
+  "contentLength": 38,
+  "truncated": false,
+  "fetchedAt": "2026-08-16T16:00:00.000Z",
+  "fromCache": false,
+  "etag": "W/\"widget-v4\"",
+  "lastModified": "Sat, 16 Aug 2026 12:00:00 GMT",
+  "products": [{
+    "name": "Blue Widget",
+    "sku": "BW-1",
+    "brand": "Widget Co",
+    "offers": [{ "price": "19.99", "priceCurrency": "EUR", "availability": "https://schema.org/InStock" }]
+  }]
+}
+```
 
 ## Tools
 
@@ -42,8 +122,7 @@ individually with `content_get_page`.
 
 ## Install
 
-After the package is published, MCP clients can run the stdio transport without
-cloning the repository:
+MCP clients can run the stdio transport without cloning the repository:
 
 ```json
 {
@@ -83,7 +162,7 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `FETCH_MIN_INTERVAL_MS` | | `1000` | Minimum spacing between fetches (~1 req/sec). |
 | `FETCH_MAX_BYTES` | | `5000000` | Hard cap on a single response body. |
 | `FETCH_MAX_RETRIES` | | `1` | Retries on 429/503, honouring `Retry-After`. |
-| `USER_AGENT` | | `website-content-mcp/0.2 …` | Outbound User-Agent. |
+| `USER_AGENT` | | `website-content-mcp/0.3 …` | Outbound User-Agent. |
 | `HOST` | | `127.0.0.1` | HTTP bind host. |
 | `PORT` | | `3215` | HTTP bind port. |
 | `HTTP_ALLOW_REFRESH` | | `false` | Expose `content_refresh` and permit forced origin revalidation over HTTP. Enable only behind an authenticated or restricted reverse proxy. Stdio always permits refresh. |
