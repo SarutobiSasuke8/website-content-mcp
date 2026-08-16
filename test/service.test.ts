@@ -116,6 +116,8 @@ void test("getPage truncates to max_length but reports the full length", async (
     assert.equal(clipped.truncated, true);
     assert.equal(clipped.contentLength, full.contentLength);
     assert.ok(clipped.contentLength > 40);
+    assert.match(clipped.contentHash, /^[a-f0-9]{64}$/u);
+    assert.equal(clipped.contentHash, full.contentHash, "the hash covers the complete content, not the clipped response");
   });
 });
 

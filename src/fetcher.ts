@@ -6,6 +6,8 @@ export interface FetcherOptions {
   maxBytes: number;
   maxRetries: number;
   userAgent: string;
+  /** Validate every outbound destination, including redirect targets. */
+  isUrlAllowed?: (url: string) => boolean;
 }
 
 /** Cache validators replayed as conditional request headers. */
@@ -18,6 +20,8 @@ export interface ConditionalHeaders {
 const MAX_RETRY_AFTER_MS = 30_000;
 const DEFAULT_BACKOFF_MS = 1_000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
 
 function retryDelayMs(retryAfter: string | null): number {
   if (!retryAfter) return DEFAULT_BACKOFF_MS;
@@ -99,36 +103,63 @@ export class Fetcher {
     url: string,
     conditional: ConditionalHeaders,
   ): Promise<{ record: FetchRecord; retryAfter: string | null }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
-    try {
+    let currentUrl = url;
+    let currentConditional = conditional;
+
+    for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+      if (this.options.isUrlAllowed && !this.options.isUrlAllowed(currentUrl)) {
+        throw new Error(`Refusing outbound request to a URL outside the configured host allowlist.`);
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
       const headers: Record<string, string> = {
         "user-agent": this.options.userAgent,
         accept: "text/html,application/xhtml+xml,text/plain,*/*",
       };
-      if (conditional.etag) headers["if-none-match"] = conditional.etag;
-      if (conditional.lastModified) headers["if-modified-since"] = conditional.lastModified;
+      if (currentConditional.etag) headers["if-none-match"] = currentConditional.etag;
+      if (currentConditional.lastModified) headers["if-modified-since"] = currentConditional.lastModified;
 
-      const response = await fetch(url, { signal: controller.signal, redirect: "follow", headers });
-      // A 304 carries no body; the caller reuses its cached copy.
-      const { body, truncated } = response.status === 304
-        ? { body: "", truncated: false }
-        : await this.readBody(response);
+      try {
+        const response = await fetch(currentUrl, { signal: controller.signal, redirect: "manual", headers });
+        if (REDIRECT_STATUSES.has(response.status)) {
+          const location = response.headers.get("location");
+          if (!location) throw new Error(`Redirect from '${currentUrl}' did not include a Location header.`);
+          if (redirectCount >= MAX_REDIRECTS) throw new Error(`Too many redirects while fetching '${url}'.`);
+          const nextUrl = new URL(location, currentUrl).toString();
+          if (this.options.isUrlAllowed && !this.options.isUrlAllowed(nextUrl)) {
+            throw new Error(`Refusing redirect from '${currentUrl}' to a URL outside the configured host allowlist.`);
+          }
+          currentUrl = nextUrl;
+          // Validators describe the original representation and must not be
+          // forwarded to a different URL.
+          currentConditional = {};
+          continue;
+        }
 
-      const record: FetchRecord = { url, status: response.status, body, fetchedAt: new Date().toISOString() };
-      const contentType = response.headers.get("content-type");
-      const etag = response.headers.get("etag");
-      const lastModified = response.headers.get("last-modified");
-      if (contentType) record.contentType = contentType;
-      // Validators are only trustworthy for a body we stored in full.
-      if (etag && !truncated) record.etag = etag;
-      if (lastModified && !truncated) record.lastModified = lastModified;
-      if (truncated) record.truncated = true;
+        // A 304 carries no body; the caller reuses its cached copy.
+        const { body, truncated } = response.status === 304
+          ? { body: "", truncated: false }
+          : await this.readBody(response);
 
-      return { record, retryAfter: response.headers.get("retry-after") };
-    } finally {
-      clearTimeout(timer);
+        const record: FetchRecord = { url, status: response.status, body, fetchedAt: new Date().toISOString() };
+        if (currentUrl !== url) record.finalUrl = currentUrl;
+        const contentType = response.headers.get("content-type");
+        const etag = response.headers.get("etag");
+        const lastModified = response.headers.get("last-modified");
+        if (contentType) record.contentType = contentType;
+        // Validators are only trustworthy for a body we stored in full.
+        if (etag && !truncated) record.etag = etag;
+        if (lastModified && !truncated) record.lastModified = lastModified;
+        if (truncated) record.truncated = true;
+
+        return { record, retryAfter: response.headers.get("retry-after") };
+      } finally {
+        clearTimeout(timer);
+      }
     }
+
+    throw new Error(`Too many redirects while fetching '${url}'.`);
   }
 
   public fetch(url: string, conditional: ConditionalHeaders = {}): Promise<FetchRecord> {

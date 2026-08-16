@@ -1,0 +1,24 @@
+[Unit]
+Description=Website Content MCP (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=website-content-mcp
+Group=website-content-mcp
+EnvironmentFile=/etc/website-content-mcp/%i.env
+WorkingDirectory=/var/lib/website-content-mcp/%i
+ExecStart=/usr/local/bin/node /opt/website-content-mcp/current/package/dist/src/http.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/website-content-mcp/%i
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

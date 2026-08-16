@@ -31,17 +31,35 @@ const urlInput = z.string().trim().min(1).max(2_048);
 /** Default cap on returned markdown, so one long page cannot swamp a context. */
 const DEFAULT_MAX_LENGTH = 50_000;
 
-export function createContentMcpServer(service: ContentService): McpServer {
-  const server = new McpServer({ name: "website-content-mcp", version: "0.2.0" });
+export interface ContentMcpServerOptions {
+  /** Permit cache warming and caller-forced origin revalidation. */
+  allowRefresh?: boolean;
+  /** Expose the local cache path in health output. Intended for local stdio only. */
+  exposeCachePath?: boolean;
+}
+
+export function createContentMcpServer(
+  service: ContentService,
+  options: ContentMcpServerOptions = {},
+): McpServer {
+  const allowRefresh = options.allowRefresh ?? true;
+  const exposeCachePath = options.exposeCachePath ?? true;
+  const server = new McpServer({ name: "website-content-mcp", version: "0.3.0" });
 
   server.registerTool(
     "content_health",
     {
       title: "Content server health",
-      description: "Report server status: configured site, sitemap URL, cache directory, cache size and last fetch time.",
+      description: exposeCachePath
+        ? "Report server status: configured site, sitemap URL, cache directory, cache size and last fetch time."
+        : "Report public server status: configured site, sitemap URL, cache size and last fetch time.",
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     },
-    async () => runTool(async () => ({ health: await service.health() })),
+    async () => runTool(async () => {
+      const health: Record<string, unknown> = { ...(await service.health()) };
+      if (!exposeCachePath) delete health.cacheDir;
+      return { health };
+    }),
   );
 
   server.registerTool(
@@ -63,7 +81,7 @@ export function createContentMcpServer(service: ContentService): McpServer {
     {
       title: "Get page as markdown",
       description:
-        "Fetch a page URL (absolute, or relative to the configured base URL), strip it to clean markdown and return content plus metadata (title, canonical URL, fetched_at, content length). Only fetches the configured site's host. Respects robots.txt.",
+        "Fetch a page URL (absolute, or relative to the configured base URL), strip it to clean markdown and return metadata, a deterministic content hash and bounded schema.org Product/Offer facts when present. Only fetches the configured site's host. Respects robots.txt.",
       inputSchema: z.object({
         url: urlInput,
         max_length: z.number().int().min(500).max(500_000).default(DEFAULT_MAX_LENGTH)
@@ -74,25 +92,32 @@ export function createContentMcpServer(service: ContentService): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false },
     },
     async ({ url, max_length, refresh }) =>
-      runTool(async () => ({ page: await service.getPage(url, { maxLength: max_length, refresh }) })),
+      runTool(async () => {
+        if (refresh && !allowRefresh) {
+          throw new Error("Forced origin refresh is disabled on this public read-only server.");
+        }
+        return { page: await service.getPage(url, { maxLength: max_length, refresh }) };
+      }),
   );
 
-  server.registerTool(
-    "content_refresh",
-    {
-      title: "Warm the content cache",
-      description:
-        "Walk the site's discoverable pages and fetch them into the cache, so content_search has something to search. Rate-limited to ~1 request/second, so a large limit takes a while. Skips robots-disallowed pages.",
-      inputSchema: z.object({
-        limit: z.number().int().min(1).max(500).default(50)
-          .describe("Maximum pages to fetch this pass."),
-        force: z.boolean().default(false)
-          .describe("Revalidate even pages that are still within the cache TTL."),
-      }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async ({ limit, force }) => runTool(async () => ({ refresh: await service.refresh(limit, force) })),
-  );
+  if (allowRefresh) {
+    server.registerTool(
+      "content_refresh",
+      {
+        title: "Warm the content cache",
+        description:
+          "Walk the site's discoverable pages and fetch them into the cache, so content_search has something to search. Rate-limited to ~1 request/second, so a large limit takes a while. Skips robots-disallowed pages.",
+        inputSchema: z.object({
+          limit: z.number().int().min(1).max(500).default(50)
+            .describe("Maximum pages to fetch this pass."),
+          force: z.boolean().default(false)
+            .describe("Revalidate even pages that are still within the cache TTL."),
+        }),
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      },
+      async ({ limit, force }) => runTool(async () => ({ refresh: await service.refresh(limit, force) })),
+    );
+  }
 
   server.registerTool(
     "content_search",

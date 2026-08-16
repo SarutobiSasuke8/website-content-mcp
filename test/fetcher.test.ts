@@ -129,3 +129,41 @@ void test("fetch spaces requests by minIntervalMs", async () => {
     },
   );
 });
+
+void test("fetch follows an allowed redirect and records the final URL", async () => {
+  await withFetch(
+    (url) => Promise.resolve(
+      url === "https://site.test/start"
+        ? new Response(null, { status: 302, headers: { location: "/final" } })
+        : new Response("<html><body>done</body></html>", { status: 200 }),
+    ),
+    async (calls) => {
+      const fetcher = new Fetcher({
+        ...options,
+        isUrlAllowed: (url) => new URL(url).hostname === "site.test",
+      });
+      const record = await fetcher.fetch("https://site.test/start");
+      assert.equal(calls.length, 2);
+      assert.equal(record.url, "https://site.test/start");
+      assert.equal(record.finalUrl, "https://site.test/final");
+      assert.equal(record.status, 200);
+    },
+  );
+});
+
+void test("fetch refuses a redirect outside the configured host allowlist", async () => {
+  await withFetch(
+    () => Promise.resolve(new Response(null, { status: 302, headers: { location: "http://127.0.0.1/admin" } })),
+    async (calls) => {
+      const fetcher = new Fetcher({
+        ...options,
+        isUrlAllowed: (url) => new URL(url).hostname === "site.test",
+      });
+      await assert.rejects(
+        () => fetcher.fetch("https://site.test/start"),
+        /outside the configured host allowlist/u,
+      );
+      assert.equal(calls.length, 1, "the disallowed redirect target must never reach the network");
+    },
+  );
+});

@@ -3,6 +3,32 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-08-16
+
+### Security
+
+- Redirects are now handled manually and every redirect destination is checked
+  against the configured host allowlist before it reaches the network.
+- Streamable HTTP now defaults to a public read-only tool surface:
+  `content_refresh` is omitted, forced page revalidation is refused, and the
+  local cache path is redacted from MCP health output. Operators can opt in
+  with `HTTP_ALLOW_REFRESH=true` only behind a restricted proxy.
+
+### Added
+
+- `content_get_page` now returns a SHA-256 content hash calculated over the
+  complete normalized Markdown, even when the response itself is truncated.
+- Upstream `ETag`, `Last-Modified`, and validated final redirect URL are exposed
+  when available.
+- Bounded schema.org Product/Offer extraction for common ecommerce facts:
+  product name, SKU, GTIN, brand, price, price range, currency, availability,
+  product/offer URL and price-valid-until.
+- MCP Registry metadata and a security policy for release readiness.
+- Optional operator-controlled startup cache warming, allowing anonymous
+  read-only deployments to populate search without exposing a refresh tool.
+- Cross-platform CI, MCP protocol smoke, package dry-run gate and an OIDC-ready
+  npm release workflow.
+
 ## [0.2.0] — 2026-08-15
 
 ### Fixed

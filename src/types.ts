@@ -10,9 +10,16 @@ export interface PageListing {
 /** Clean, agent-readable representation of a single page. */
 export interface PageContent {
   url: string;
+  /** Final URL after a validated redirect, when different from `url`. */
+  finalUrl?: string;
   canonicalUrl?: string;
   title?: string;
   markdown: string;
+  /** SHA-256 of the complete normalized markdown, before response truncation. */
+  contentHash: string;
+  etag?: string;
+  lastModified?: string;
+  products?: ProductData[];
   contentLength: number;
   /** True when `markdown` was cut short by the caller's `max_length`. */
   truncated: boolean;
@@ -41,11 +48,34 @@ export interface ExtractedContent {
   title?: string;
   canonicalUrl?: string;
   markdown: string;
+  products?: ProductData[];
+}
+
+/** Bounded schema.org Product/Offer facts useful to commerce agents. */
+export interface ProductOfferData {
+  price?: string;
+  lowPrice?: string;
+  highPrice?: string;
+  priceCurrency?: string;
+  availability?: string;
+  url?: string;
+  priceValidUntil?: string;
+}
+
+export interface ProductData {
+  name?: string;
+  sku?: string;
+  gtin?: string;
+  brand?: string;
+  url?: string;
+  offers: ProductOfferData[];
 }
 
 /** Raw HTTP fetch result, as stored in the cache. */
 export interface FetchRecord {
   url: string;
+  /** Final URL after validated redirects, when different from `url`. */
+  finalUrl?: string;
   status: number;
   contentType?: string;
   body: string;

@@ -20,9 +20,11 @@ const envSchema = z.object({
   FETCH_MIN_INTERVAL_MS: z.coerce.number().int().min(0).max(60_000).default(1_000),
   FETCH_MAX_BYTES: z.coerce.number().int().min(1_024).max(50_000_000).default(5_000_000),
   FETCH_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
-  USER_AGENT: z.string().default("website-content-mcp/0.2 (+https://github.com/SarutobiSasuke8/website-content-mcp)"),
+  USER_AGENT: z.string().default("website-content-mcp/0.3 (+https://github.com/SarutobiSasuke8/website-content-mcp)"),
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_215),
+  HTTP_ALLOW_REFRESH: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  STARTUP_REFRESH_LIMIT: z.coerce.number().int().min(0).max(500).default(0),
 });
 
 function csv(value: string | undefined): string[] {
@@ -46,6 +48,10 @@ export interface AppConfig {
   userAgent: string;
   host: string;
   port: number;
+  /** Expose origin-revalidating tools on Streamable HTTP. Off by default. */
+  httpAllowRefresh: boolean;
+  /** Warm this many discoverable pages after HTTP starts; zero disables. */
+  startupRefreshLimit: number;
 }
 
 /**
@@ -99,5 +105,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     userAgent: parsed.USER_AGENT,
     host: parsed.HOST,
     port: parsed.PORT,
+    httpAllowRefresh: parsed.HTTP_ALLOW_REFRESH,
+    startupRefreshLimit: parsed.STARTUP_REFRESH_LIMIT,
   };
 }

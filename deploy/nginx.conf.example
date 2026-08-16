@@ -1,0 +1,35 @@
+# Define once in nginx's http {} block, not inside a server block.
+limit_req_zone $binary_remote_addr zone=website_content_mcp:10m rate=30r/m;
+
+server {
+    listen 443 ssl;
+    server_name content.example.com;
+
+    # TLS certificate configuration belongs to the deployment environment.
+
+    client_max_body_size 64k;
+
+    location = /healthz {
+        proxy_pass http://127.0.0.1:3215;
+        # The MCP SDK validates the upstream Host against its loopback listener.
+        proxy_set_header Host 127.0.0.1:3215;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 10s;
+    }
+
+    location = /mcp {
+        limit_req zone=website_content_mcp burst=10 nodelay;
+        proxy_pass http://127.0.0.1:3215;
+        proxy_http_version 1.1;
+        # The MCP SDK validates the upstream Host against its loopback listener.
+        proxy_set_header Host 127.0.0.1:3215;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}

@@ -7,7 +7,7 @@ import { createContentMcpServer } from "./server.js";
 
 const config = loadConfig();
 const { service } = createRuntime(config);
-const mcpServer = createContentMcpServer(service);
+const mcpServer = createContentMcpServer(service, { allowRefresh: true, exposeCachePath: true });
 const transport = new StdioServerTransport(process.stdin, process.stdout);
 await mcpServer.connect(transport);
 

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { normalizeHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
@@ -164,13 +166,18 @@ export class ContentService {
     const content: PageContent = {
       url,
       markdown,
+      contentHash: createHash("sha256").update(full).digest("hex"),
       contentLength: full.length,
       truncated,
       fetchedAt: record.fetchedAt,
       fromCache,
     };
+    if (record.finalUrl) content.finalUrl = record.finalUrl;
+    if (record.etag) content.etag = record.etag;
+    if (record.lastModified) content.lastModified = record.lastModified;
     if (extracted.title) content.title = extracted.title;
     if (extracted.canonicalUrl) content.canonicalUrl = extracted.canonicalUrl;
+    if (extracted.products) content.products = extracted.products;
     return content;
   }
 
