@@ -3,15 +3,44 @@ import type { FetchRecord } from "./types.js";
 export interface FetcherOptions {
   timeoutMs: number;
   minIntervalMs: number;
+  maxBytes: number;
+  maxRetries: number;
   userAgent: string;
+  /** Validate every outbound destination, including redirect targets. */
+  isUrlAllowed?: (url: string) => boolean;
 }
+
+/** Cache validators replayed as conditional request headers. */
+export interface ConditionalHeaders {
+  etag?: string;
+  lastModified?: string;
+}
+
+/** Longest we will honour a `Retry-After` before giving up on the wait. */
+const MAX_RETRY_AFTER_MS = 30_000;
+const DEFAULT_BACKOFF_MS = 1_000;
+const RETRYABLE_STATUSES = new Set([429, 503]);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
+
+function retryDelayMs(retryAfter: string | null): number {
+  if (!retryAfter) return DEFAULT_BACKOFF_MS;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1_000, MAX_RETRY_AFTER_MS);
+  const date = Date.parse(retryAfter);
+  if (Number.isFinite(date)) return Math.min(Math.max(date - Date.now(), 0), MAX_RETRY_AFTER_MS);
+  return DEFAULT_BACKOFF_MS;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Rate-limited HTTP fetcher.
  *
  * Requests to the target site are serialized and spaced by at least
  * `minIntervalMs` (default 1s → max 1 request/second) to stay polite. Each
- * request has a hard timeout via AbortController.
+ * request has a hard timeout via AbortController, a hard body size cap, and a
+ * bounded retry that honours `Retry-After` on 429/503.
  */
 export class Fetcher {
   private chain: Promise<unknown> = Promise.resolve();
@@ -21,7 +50,7 @@ export class Fetcher {
 
   private async pace(): Promise<void> {
     const wait = this.lastStart + this.options.minIntervalMs - Date.now();
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    if (wait > 0) await sleep(wait);
     this.lastStart = Date.now();
   }
 
@@ -36,28 +65,111 @@ export class Fetcher {
     return run;
   }
 
-  public fetch(url: string): Promise<FetchRecord> {
-    return this.enqueue(async () => {
+  /**
+   * Read a response body, stopping hard at `maxBytes` so one oversized page
+   * cannot exhaust memory or fill the cache.
+   */
+  private async readBody(response: Response): Promise<{ body: string; truncated: boolean }> {
+    if (!response.body) return { body: "", truncated: false };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    let bytes = 0;
+    let truncated = false;
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        let chunk = value;
+        if (bytes + chunk.byteLength > this.options.maxBytes) {
+          chunk = chunk.subarray(0, Math.max(0, this.options.maxBytes - bytes));
+          truncated = true;
+        }
+        bytes += chunk.byteLength;
+        body += decoder.decode(chunk, { stream: true });
+        if (truncated) break;
+      }
+      body += decoder.decode();
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+
+    return { body, truncated };
+  }
+
+  private async fetchOnce(
+    url: string,
+    conditional: ConditionalHeaders,
+  ): Promise<{ record: FetchRecord; retryAfter: string | null }> {
+    let currentUrl = url;
+    let currentConditional = conditional;
+
+    for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+      if (this.options.isUrlAllowed && !this.options.isUrlAllowed(currentUrl)) {
+        throw new Error(`Refusing outbound request to a URL outside the configured host allowlist.`);
+      }
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+      const headers: Record<string, string> = {
+        "user-agent": this.options.userAgent,
+        accept: "text/html,application/xhtml+xml,text/plain,*/*",
+      };
+      if (currentConditional.etag) headers["if-none-match"] = currentConditional.etag;
+      if (currentConditional.lastModified) headers["if-modified-since"] = currentConditional.lastModified;
+
       try {
-        const response = await fetch(url, {
-          signal: controller.signal,
-          redirect: "follow",
-          headers: { "user-agent": this.options.userAgent, accept: "text/html,application/xhtml+xml,text/plain,*/*" },
-        });
-        const body = await response.text();
-        const contentType = response.headers.get("content-type") ?? undefined;
-        const record: FetchRecord = {
-          url,
-          status: response.status,
-          body,
-          fetchedAt: new Date().toISOString(),
-        };
+        const response = await fetch(currentUrl, { signal: controller.signal, redirect: "manual", headers });
+        if (REDIRECT_STATUSES.has(response.status)) {
+          const location = response.headers.get("location");
+          if (!location) throw new Error(`Redirect from '${currentUrl}' did not include a Location header.`);
+          if (redirectCount >= MAX_REDIRECTS) throw new Error(`Too many redirects while fetching '${url}'.`);
+          const nextUrl = new URL(location, currentUrl).toString();
+          if (this.options.isUrlAllowed && !this.options.isUrlAllowed(nextUrl)) {
+            throw new Error(`Refusing redirect from '${currentUrl}' to a URL outside the configured host allowlist.`);
+          }
+          currentUrl = nextUrl;
+          // Validators describe the original representation and must not be
+          // forwarded to a different URL.
+          currentConditional = {};
+          continue;
+        }
+
+        // A 304 carries no body; the caller reuses its cached copy.
+        const { body, truncated } = response.status === 304
+          ? { body: "", truncated: false }
+          : await this.readBody(response);
+
+        const record: FetchRecord = { url, status: response.status, body, fetchedAt: new Date().toISOString() };
+        if (currentUrl !== url) record.finalUrl = currentUrl;
+        const contentType = response.headers.get("content-type");
+        const etag = response.headers.get("etag");
+        const lastModified = response.headers.get("last-modified");
         if (contentType) record.contentType = contentType;
-        return record;
+        // Validators are only trustworthy for a body we stored in full.
+        if (etag && !truncated) record.etag = etag;
+        if (lastModified && !truncated) record.lastModified = lastModified;
+        if (truncated) record.truncated = true;
+
+        return { record, retryAfter: response.headers.get("retry-after") };
       } finally {
         clearTimeout(timer);
+      }
+    }
+
+    throw new Error(`Too many redirects while fetching '${url}'.`);
+  }
+
+  public fetch(url: string, conditional: ConditionalHeaders = {}): Promise<FetchRecord> {
+    return this.enqueue(async () => {
+      let attempt = 0;
+      for (;;) {
+        const { record, retryAfter } = await this.fetchOnce(url, conditional);
+        if (!RETRYABLE_STATUSES.has(record.status) || attempt >= this.options.maxRetries) return record;
+        attempt += 1;
+        await sleep(retryDelayMs(retryAfter));
       }
     });
   }

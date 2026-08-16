@@ -1,0 +1,38 @@
+name: Publish npm package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # npm trusted publishing requires a current npm CLI; Node 24 supplies it.
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run check
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run pack:check
+      - run: npm run smoke:mcp
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match package.json version $PKG"
+            exit 1
+          fi
+      # Configure this repository/workflow as the package's trusted publisher
+      # on npm before relying on the release job. No long-lived npm token is used.
+      - run: npm publish --access public

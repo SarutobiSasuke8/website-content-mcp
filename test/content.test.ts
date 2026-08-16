@@ -44,3 +44,39 @@ void test("htmlToMarkdown converts links and lists to markdown syntax", async ()
   assert.match(result.markdown, /\[the documentation\]\(https:\/\/example\.com\/docs\)/u);
   assert.match(result.markdown, /^- /mu);
 });
+
+void test("htmlToMarkdown extracts bounded schema.org Product and Offer facts", () => {
+  const html = `<html><head><title>Shop</title>
+    <script type="application/ld+json">{
+      "@context":"https://schema.org","@type":"Product","name":"Blue Widget",
+      "sku":"BW-1","gtin13":"1234567890123","brand":{"@type":"Brand","name":"Widget Co"},
+      "offers":{"@type":"Offer","price":"19.99","priceCurrency":"EUR","availability":"https://schema.org/InStock"}
+    }</script></head><body><main><h1>Blue Widget</h1><p>A useful blue widget.</p></main></body></html>`;
+  const result = htmlToMarkdown(html, "https://shop.test/blue-widget");
+
+  assert.equal(result.products?.length, 1);
+  assert.equal(result.products?.[0]?.name, "Blue Widget");
+  assert.equal(result.products?.[0]?.sku, "BW-1");
+  assert.equal(result.products?.[0]?.gtin, "1234567890123");
+  assert.equal(result.products?.[0]?.brand, "Widget Co");
+  assert.deepEqual(result.products?.[0]?.offers[0], {
+    price: "19.99",
+    priceCurrency: "EUR",
+    availability: "https://schema.org/InStock",
+  });
+  assert.doesNotMatch(result.markdown, /priceCurrency/u, "JSON-LD must not leak into markdown");
+});
+
+void test("structured commerce extraction bounds field length and JSON-LD recursion", () => {
+  const longName = "x".repeat(3_000);
+  let nested: Record<string, unknown> = { "@type": "Product", name: "too deep" };
+  for (let depth = 0; depth < 20; depth += 1) nested = { "@graph": [nested] };
+  const html = `<html><head><script type="application/ld+json">${JSON.stringify([
+    { "@type": "Product", name: longName },
+    nested,
+  ])}</script></head><body><p>Shop content.</p></body></html>`;
+
+  const result = htmlToMarkdown(html);
+  assert.equal(result.products?.length, 1, "a product beyond the recursion cap is ignored");
+  assert.equal(result.products?.[0]?.name?.length, 2_048);
+});

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "website-content": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/src/stdio.js"],
+      "env": {
+        "SITE_BASE_URL": "https://example.com"
+      }
+    }
+  }
+}

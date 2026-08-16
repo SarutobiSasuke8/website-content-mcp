@@ -7,60 +7,56 @@ import test from "node:test";
 import { loadConfig } from "../src/config.js";
 import { createRuntime } from "../src/runtime.js";
 
-/**
- * Live integration test against a real public site (https://example.com).
- * Exercises the full path: health → list_pages → get_page → search.
- *
- * example.com has no sitemap.xml/robots.txt, so it also verifies the
- * "configured page list" discovery fallback.
- *
- * Opt-in. This test reaches the real network, so it is skipped by default and
- * in CI: a third-party outage is not a defect in this server. Run it with
- * RUN_LIVE_TESTS=1 when you want end-to-end confirmation against a live site.
- */
-void test("live integration against example.com", {
+/** Opt-in live checks. Set LIVE_SITE_URLS to a comma-separated deployment set. */
+void test("live integration against configured public sites", {
   timeout: 30_000,
   skip: process.env.RUN_LIVE_TESTS === "1" ? false : "set RUN_LIVE_TESTS=1 to run",
 }, async () => {
-  const cacheDir = await mkdtemp(path.join(os.tmpdir(), "wcm-int-"));
-  try {
-    const config = loadConfig({
-      SITE_BASE_URL: "https://example.com",
-      CACHE_DIR: cacheDir,
-      FETCH_MIN_INTERVAL_MS: "0",
-    } as NodeJS.ProcessEnv);
-    const { service } = createRuntime(config);
+  const sites = (process.env.LIVE_SITE_URLS ?? "https://example.com")
+    .split(",")
+    .map((site) => site.trim())
+    .filter(Boolean);
 
-    const health = await service.health();
-    console.log("HEALTH:", JSON.stringify(health, null, 2));
-    assert.equal(health.status, "ok");
-    assert.equal(health.baseUrl, "https://example.com/");
-    assert.equal(health.cacheEntries, 0);
+  for (const site of sites) {
+    const cacheDir = await mkdtemp(path.join(os.tmpdir(), "wcm-int-"));
+    try {
+      const baseUrl = new URL(site).toString();
+      const config = loadConfig({
+        SITE_BASE_URL: baseUrl,
+        CACHE_DIR: cacheDir,
+        FETCH_MIN_INTERVAL_MS: "0",
+      } as NodeJS.ProcessEnv);
+      const { service } = createRuntime(config);
 
-    const list = await service.listPages(50);
-    console.log("LIST_PAGES:", JSON.stringify(list, null, 2));
-    assert.equal(list.source, "configured");
-    assert.ok(list.pages.length >= 1);
-    assert.equal(list.pages[0]?.url, "https://example.com/");
+      const health = await service.health();
+      console.log("HEALTH:", JSON.stringify(health, null, 2));
+      assert.equal(health.status, "ok");
+      assert.equal(health.baseUrl, baseUrl);
+      assert.equal(health.cacheEntries, 0);
 
-    const page = await service.getPage("https://example.com/");
-    console.log("GET_PAGE:", JSON.stringify({ ...page, markdown: page.markdown.slice(0, 400) }, null, 2));
-    assert.equal(page.url, "https://example.com/");
-    assert.match(page.title ?? "", /Example Domain/u);
-    assert.match(page.markdown, /examples/iu);
-    assert.ok(page.contentLength > 0);
+      const list = await service.listPages(50);
+      console.log("LIST_PAGES:", JSON.stringify({ site: baseUrl, source: list.source, count: list.pages.length }, null, 2));
+      assert.ok(list.pages.length >= 1);
 
-    const results = await service.search("domain", 10);
-    console.log("SEARCH:", JSON.stringify(results, null, 2));
-    assert.ok(results.length >= 1);
-    assert.equal(results[0]?.url, "https://example.com/");
-    assert.ok(results[0]?.score >= 1);
+      const firstUrl = list.pages[0]?.url;
+      assert.ok(firstUrl);
+      const page = await service.getPage(firstUrl);
+      console.log("GET_PAGE:", JSON.stringify({ ...page, markdown: page.markdown.slice(0, 400) }, null, 2));
+      assert.ok(page.contentLength > 0);
+      assert.match(page.contentHash, /^[a-f0-9]{64}$/u);
 
-    const healthAfter = await service.health();
-    console.log("HEALTH_AFTER:", JSON.stringify(healthAfter, null, 2));
-    assert.ok(healthAfter.cacheEntries >= 1);
-    assert.ok(healthAfter.lastFetchAt);
-  } finally {
-    await rm(cacheDir, { recursive: true, force: true });
+      const query = page.title?.split(/\s+/u).find((word) => word.length >= 4)
+        ?? page.markdown.split(/\s+/u).find((word) => word.length >= 4)
+        ?? "content";
+      const results = await service.search(query, 10);
+      console.log("SEARCH:", JSON.stringify({ site: baseUrl, query, count: results.length }, null, 2));
+      assert.ok(results.length >= 1);
+
+      const healthAfter = await service.health();
+      assert.ok(healthAfter.cacheEntries >= 1);
+      assert.ok(healthAfter.lastFetchAt);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   }
 });

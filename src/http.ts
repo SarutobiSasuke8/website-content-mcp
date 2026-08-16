@@ -12,7 +12,10 @@ import type { ErrorRequestHandler } from "express";
 const config = loadConfig();
 const { service } = createRuntime(config);
 
-const mcpServer = createContentMcpServer(service);
+const mcpServer = createContentMcpServer(service, {
+  allowRefresh: config.httpAllowRefresh,
+  exposeCachePath: false,
+});
 const transport = new NodeStreamableHTTPServerTransport({
   sessionIdGenerator: undefined,
   enableJsonResponse: true,
@@ -44,6 +47,15 @@ app.use(errorHandler);
 
 const httpServer = app.listen(config.port, config.host, () => {
   process.stdout.write(`website-content-mcp listening on http://${config.host}:${config.port}/mcp (site: ${config.baseUrl})\n`);
+  if (config.startupRefreshLimit > 0) {
+    void service.refresh(config.startupRefreshLimit).then((result) => {
+      process.stdout.write(
+        `Startup cache warm complete: requested=${result.requested} fetched=${result.fetched} revalidated=${result.revalidated} skipped=${result.skipped} failed=${result.failed.length}\n`,
+      );
+    }).catch((error: unknown) => {
+      process.stderr.write(`Startup cache warm failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+    });
+  }
 });
 httpServer.requestTimeout = 30_000;
 httpServer.headersTimeout = 35_000;
