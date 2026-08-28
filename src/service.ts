@@ -24,6 +24,16 @@ const MAX_NESTED_SITEMAPS = 5;
 const MAX_REFRESH_ERRORS = 20;
 const EMPTY_ROBOTS: RobotsRules = { disallow: [], allow: [], sitemaps: [] };
 
+interface RobotsResult {
+  rules: RobotsRules;
+  warnings: string[];
+}
+
+interface SitemapLoadResult {
+  entries: SitemapEntry[];
+  warnings: string[];
+}
+
 export class RobotsDisallowedError extends Error {
   public constructor(url: string) {
     super(`Fetching '${url}' is disallowed by the site's robots.txt.`);
@@ -44,7 +54,7 @@ export class HostNotAllowedError extends Error {
  */
 export class ContentService {
   /** robots.txt rules, cached per origin. */
-  private readonly robotsByOrigin = new Map<string, RobotsRules>();
+  private readonly robotsByOrigin = new Map<string, RobotsResult>();
 
   public constructor(
     private readonly config: AppConfig,
@@ -115,33 +125,46 @@ export class ContentService {
    * search never re-parses the same HTML.
    */
   private async extractionOf(record: FetchRecord): Promise<ExtractedContent> {
-    if (record.extracted) return record.extracted;
-    const extracted = htmlToMarkdown(record.body, record.url);
+    if (record.extracted?.extractionMethod && record.extracted.extractionQuality) return record.extracted;
+    const extracted = isPlainText(record)
+      ? plainTextExtraction(record.body)
+      : htmlToMarkdown(record.body, record.url);
     await this.cache.set({ ...record, extracted });
     return extracted;
   }
 
-  private async getRobots(origin: string): Promise<RobotsRules> {
+  private async getRobots(origin: string): Promise<RobotsResult> {
     const cached = this.robotsByOrigin.get(origin);
     if (cached) return cached;
 
     const robotsUrl = new URL("/robots.txt", origin).toString();
     let rules: RobotsRules = EMPTY_ROBOTS;
+    const warnings: string[] = [];
     try {
       const { record } = await this.load(robotsUrl);
-      if (record.status >= 200 && record.status < 300) rules = parseRobots(record.body);
-    } catch {
+      if (record.status >= 200 && record.status < 300) {
+        if (looksLikeHtml(record)) {
+          warnings.push(`${robotsUrl} returned HTML instead of a robots.txt document.`);
+        } else {
+          rules = parseRobots(record.body);
+        }
+      } else {
+        warnings.push(`${robotsUrl} returned HTTP ${record.status}.`);
+      }
+    } catch (error) {
       rules = EMPTY_ROBOTS;
+      warnings.push(`${robotsUrl} could not be read: ${error instanceof Error ? error.message : "unknown error"}`);
     }
-    this.robotsByOrigin.set(origin, rules);
-    return rules;
+    const result = { rules, warnings };
+    this.robotsByOrigin.set(origin, result);
+    return result;
   }
 
   /** Whether robots.txt for the URL's own origin permits fetching it. */
   private async isRobotsAllowed(url: string): Promise<boolean> {
     const parsed = new URL(url);
-    const rules = await this.getRobots(parsed.origin);
-    return isPathAllowed(rules, parsed.pathname + parsed.search);
+    const robots = await this.getRobots(parsed.origin);
+    return isPathAllowed(robots.rules, parsed.pathname + parsed.search);
   }
 
   private async assertAllowed(url: string): Promise<void> {
@@ -171,6 +194,9 @@ export class ContentService {
       truncated,
       fetchedAt: record.fetchedAt,
       fromCache,
+      extractionMethod: extracted.extractionMethod,
+      extractionQuality: extracted.extractionQuality,
+      sourceTrust: "untrusted-web-content",
     };
     if (record.finalUrl) content.finalUrl = record.finalUrl;
     if (record.etag) content.etag = record.etag;
@@ -178,46 +204,75 @@ export class ContentService {
     if (extracted.title) content.title = extracted.title;
     if (extracted.canonicalUrl) content.canonicalUrl = extracted.canonicalUrl;
     if (extracted.products) content.products = extracted.products;
+    if (extracted.warnings) content.warnings = extracted.warnings;
     return content;
   }
 
   /** Fetch and parse a sitemap, following one level of sitemap-index nesting. */
-  private async loadSitemapEntries(sitemapUrl: string): Promise<SitemapEntry[]> {
-    if (!this.isAllowedHost(sitemapUrl)) return [];
+  private async loadSitemapEntries(sitemapUrl: string): Promise<SitemapLoadResult> {
+    if (!this.isAllowedHost(sitemapUrl)) {
+      return { entries: [], warnings: [`Refused off-host sitemap '${sitemapUrl}'.`] };
+    }
     const { record } = await this.load(sitemapUrl);
-    if (record.status >= 400 || !record.body.trim()) return [];
+    if (record.status >= 400) {
+      return { entries: [], warnings: [`${sitemapUrl} returned HTTP ${record.status}.`] };
+    }
+    if (!record.body.trim()) {
+      return { entries: [], warnings: [`${sitemapUrl} was empty.`] };
+    }
+    if (!looksLikeSitemap(record)) {
+      return { entries: [], warnings: [`${sitemapUrl} did not return a recognizable XML sitemap.`] };
+    }
     const parsed = parseSitemap(record.body);
-    if (parsed.entries.length > 0) return parsed.entries;
+    if (parsed.entries.length > 0) return { entries: parsed.entries, warnings: [] };
 
     const entries: SitemapEntry[] = [];
+    const warnings: string[] = [];
     for (const nested of parsed.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
       if (!this.isAllowedHost(nested)) continue;
       const { record: nestedRecord } = await this.load(nested);
-      if (nestedRecord.status < 400 && nestedRecord.body.trim()) {
+      if (nestedRecord.status < 400 && nestedRecord.body.trim() && looksLikeSitemap(nestedRecord)) {
         entries.push(...parseSitemap(nestedRecord.body).entries);
+      } else {
+        warnings.push(`${nested} did not return a usable XML sitemap.`);
       }
     }
-    return entries;
+    if (entries.length === 0 && parsed.sitemaps.length === 0) {
+      warnings.push(`${sitemapUrl} contained no page or nested-sitemap entries.`);
+    }
+    return { entries, warnings };
   }
 
-  public async getSitemap(): Promise<{ sitemapUrl: string; available: boolean; entries: SitemapEntry[] }> {
-    const entries = await this.loadSitemapEntries(this.config.sitemapUrl);
-    return { sitemapUrl: this.config.sitemapUrl, available: entries.length > 0, entries };
+  public async getSitemap(): Promise<{ sitemapUrl: string; available: boolean; entries: SitemapEntry[]; warnings: string[] }> {
+    const result = await this.loadSitemapEntries(this.config.sitemapUrl);
+    return { sitemapUrl: this.config.sitemapUrl, available: result.entries.length > 0, ...result };
   }
 
-  public async listPages(limit: number): Promise<{ source: PageListing["source"]; pages: PageListing[] }> {
+  public async listPages(limit: number): Promise<{ source: PageListing["source"]; pages: PageListing[]; warnings: string[] }> {
+    const warnings: string[] = [];
     // 1. Configured sitemap.
-    const sitemapEntries = await this.loadSitemapEntries(this.config.sitemapUrl);
-    if (sitemapEntries.length > 0) {
-      return { source: "sitemap", pages: sitemapEntries.slice(0, limit).map((entry) => toListing(entry, "sitemap")) };
+    const sitemap = await this.loadSitemapEntries(this.config.sitemapUrl);
+    warnings.push(...sitemap.warnings);
+    if (sitemap.entries.length > 0) {
+      return {
+        source: "sitemap",
+        pages: sitemap.entries.slice(0, limit).map((entry) => toListing(entry, "sitemap")),
+        warnings,
+      };
     }
 
     // 2. Sitemaps advertised in robots.txt.
     const robots = await this.getRobots(new URL(this.config.baseUrl).origin);
-    for (const sitemap of robots.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
-      const entries = await this.loadSitemapEntries(sitemap);
-      if (entries.length > 0) {
-        return { source: "robots", pages: entries.slice(0, limit).map((entry) => toListing(entry, "robots")) };
+    warnings.push(...robots.warnings);
+    for (const sitemapUrl of robots.rules.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
+      const result = await this.loadSitemapEntries(sitemapUrl);
+      warnings.push(...result.warnings);
+      if (result.entries.length > 0) {
+        return {
+          source: "robots",
+          pages: result.entries.slice(0, limit).map((entry) => toListing(entry, "robots")),
+          warnings,
+        };
       }
     }
 
@@ -226,6 +281,7 @@ export class ContentService {
     return {
       source: "configured",
       pages: configured.slice(0, limit).map((url) => ({ url, source: "configured" as const })),
+      warnings,
     };
   }
 
@@ -234,7 +290,7 @@ export class ContentService {
    * something to search. Robots-disallowed and off-host URLs are skipped.
    */
   public async refresh(limit: number, force = false): Promise<RefreshResult> {
-    const { source, pages } = await this.listPages(limit);
+    const { source, pages, warnings } = await this.listPages(limit);
     const result: RefreshResult = {
       source,
       requested: pages.length,
@@ -243,6 +299,7 @@ export class ContentService {
       skipped: 0,
       failed: [],
     };
+    if (warnings.length > 0) result.warnings = warnings;
 
     for (const page of pages) {
       try {
@@ -332,6 +389,35 @@ function isHtml(record: FetchRecord): boolean {
   const head = record.body.trimStart().slice(0, 200).toLowerCase();
   if (head.startsWith("<?xml") || head.includes("<urlset") || head.includes("<sitemapindex")) return false;
   return head.startsWith("<");
+}
+
+function looksLikeHtml(record: FetchRecord): boolean {
+  const type = record.contentType?.toLowerCase() ?? "";
+  if (type.includes("html")) return true;
+  const head = record.body.trimStart().slice(0, 300).toLowerCase();
+  return head.startsWith("<!doctype html") || head.startsWith("<html") || head.includes("<html");
+}
+
+function looksLikeSitemap(record: FetchRecord): boolean {
+  const type = record.contentType?.toLowerCase() ?? "";
+  const head = record.body.trimStart().slice(0, 500).toLowerCase();
+  if (head.includes("<urlset") || head.includes("<sitemapindex")) return true;
+  return (type.includes("xml") || type.includes("application/rss"))
+    && (head.startsWith("<?xml") || head.startsWith("<urlset") || head.startsWith("<sitemapindex"));
+}
+
+function isPlainText(record: FetchRecord): boolean {
+  return record.contentType?.toLowerCase().includes("text/plain") ?? false;
+}
+
+function plainTextExtraction(body: string): ExtractedContent {
+  const markdown = body.replace(/\u00A0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return {
+    markdown,
+    extractionMethod: markdown ? "plain-text" : "empty",
+    extractionQuality: markdown ? "full" : "empty",
+    ...(markdown ? {} : { warnings: ["The text response was empty."] }),
+  };
 }
 
 function toListing(entry: SitemapEntry, source: PageListing["source"]): PageListing {

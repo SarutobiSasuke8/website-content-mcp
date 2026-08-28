@@ -8,6 +8,8 @@ export interface FetcherOptions {
   userAgent: string;
   /** Validate every outbound destination, including redirect targets. */
   isUrlAllowed?: (url: string) => boolean;
+  /** Resolve and validate the network destination before every request. */
+  assertUrlAllowed?: (url: string) => Promise<void> | void;
 }
 
 /** Cache validators replayed as conditional request headers. */
@@ -47,6 +49,13 @@ export class Fetcher {
   private lastStart = 0;
 
   public constructor(private readonly options: FetcherOptions) {}
+
+  private async assertAllowed(url: string): Promise<void> {
+    if (this.options.isUrlAllowed && !this.options.isUrlAllowed(url)) {
+      throw new Error("Refusing outbound request to a URL outside the configured host allowlist.");
+    }
+    await this.options.assertUrlAllowed?.(url);
+  }
 
   private async pace(): Promise<void> {
     const wait = this.lastStart + this.options.minIntervalMs - Date.now();
@@ -107,9 +116,7 @@ export class Fetcher {
     let currentConditional = conditional;
 
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      if (this.options.isUrlAllowed && !this.options.isUrlAllowed(currentUrl)) {
-        throw new Error(`Refusing outbound request to a URL outside the configured host allowlist.`);
-      }
+      await this.assertAllowed(currentUrl);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);

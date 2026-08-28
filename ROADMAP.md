@@ -17,17 +17,16 @@ updated `server.json` to the MCP Registry after the npm publish succeeds, so
 the registry version can never drift from npm. The workflow already verifies
 that `server.json` matches `package.json` before publishing.
 
-## 3. Deployed reference instance for astraeus.ie
+## 3. Keep the astraeus.ie reference deployment verified
 
-Stand up a public reference deployment serving `https://astraeus.ie` using
-`deploy/website-content-mcp@.service` and `deploy/nginx.conf.example`, and run
-the verification checklist in `docs/production-deployment.md` end to end
-against it. This gives the README a live, linkable example instance.
+The public read-only reference deployment at `https://mcp.astraeus.ie/mcp` is
+live. Keep it in the release verification set and document the public endpoint
+as the reference implementation after each deployed package upgrade.
 
-## 4. Document pairing with a scheduler/snapshot workflow
+## 4. Complete the owned-site dogfood proof
 
-The README names scheduling, snapshots, diffs and alerts as out of scope: this
-server is the content-access layer only. Add a short guide (or example repo)
-showing how to pair it with a scheduler and snapshot store to build the
-monitoring workflows the README alludes to, without widening this server's own
-scope.
+The repository now includes `npm run dogfood`, a bounded snapshot-and-diff
+validation harness, and `docs/dogfood-monitoring.md`. Run the owned-site set for
+30 days and retain evidence of meaningful changes, false changes, extraction
+failures and decisions influenced before commissioning a production scheduler
+or making monitoring claims.
