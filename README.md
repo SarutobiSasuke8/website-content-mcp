@@ -227,9 +227,14 @@ npm test
 ```
 
 Live checks are opt-in. To validate real deployment targets, set
-`RUN_LIVE_TESTS=1` and optionally provide a comma-separated `LIVE_SITE_URLS`
-list before running `npm test`. Without `LIVE_SITE_URLS`, the live check uses
-`https://example.com`.
+`RUN_LIVE_TESTS=1` and provide a comma-separated `LIVE_SITE_URLS` list of
+sites you own or operate before running `npm test`, for example:
+
+```bash
+RUN_LIVE_TESTS=1 LIVE_SITE_URLS=https://astraeus.ie npm test
+```
+
+Without `LIVE_SITE_URLS`, the live check falls back to `https://example.com`.
 
 ## Security & etiquette
 
