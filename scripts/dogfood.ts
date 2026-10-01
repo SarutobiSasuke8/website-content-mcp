@@ -242,8 +242,11 @@ export function parseArgs(argv: string[], cwd = process.cwd()): { configFile: st
   let dataDir = ".dogfood-data";
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
-    if (value === "--config" && argv[index + 1]) configFile = argv[++index] ?? configFile;
-    else if (value === "--data-dir" && argv[index + 1]) dataDir = argv[++index] ?? dataDir;
+    if (value !== "--config" && value !== "--data-dir") throw new Error(`Unknown argument: ${value}`);
+    const argument = argv[++index];
+    if (!argument || argument.startsWith("--")) throw new Error(`Missing value for ${value}`);
+    if (value === "--config") configFile = argument;
+    else dataDir = argument;
   }
   return { configFile: path.resolve(cwd, configFile), dataDir: path.resolve(cwd, dataDir) };
 }
@@ -286,6 +289,10 @@ export async function runDogfood(configFile: string, dataDir: string): Promise<D
 }
 
 async function main(): Promise<void> {
+  if (process.argv.slice(2).some(arg => arg === "--help" || arg === "-h")) {
+    process.stdout.write("Usage: website-content-dogfood [--config FILE] [--data-dir DIRECTORY]\nRuns the configured public-site checks and writes content-free evidence.\n");
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   const run = await runDogfood(args.configFile, args.dataDir);
   process.stdout.write(`${markdownReport(run)}\n`);

@@ -1,7 +1,7 @@
 import { DiskCache } from "./cache.js";
 import { normalizeHost } from "./config.js";
 import { Fetcher } from "./fetcher.js";
-import { assertPublicHttpUrl } from "./network-policy.js";
+import { createPublicDispatcher } from "./network-policy.js";
 import { ContentService } from "./service.js";
 
 import type { AppConfig } from "./config.js";
@@ -26,7 +26,7 @@ export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: F
     },
   };
   if (!config.fetchAllowPrivateNetwork) {
-    fetcherOptions.assertUrlAllowed = async (rawUrl) => await assertPublicHttpUrl(rawUrl);
+    fetcherOptions.createDispatcher = (url, signal) => createPublicDispatcher(url, undefined, signal);
   }
   const fetcher = new Fetcher(fetcherOptions);
   const service = new ContentService(config, cache, fetcher);

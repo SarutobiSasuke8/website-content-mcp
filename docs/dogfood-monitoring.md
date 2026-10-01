@@ -53,6 +53,17 @@ owned sites with 0 fetch failures. The repeat recorded 26 unchanged pages,
 12 cache revalidations, 1 metadata-only page and 2 discovery warnings. This
 is a same-day regression check, not the required 30-day operational record.
 
-The sweep also corrects IPv6 literal handling and installed configuration
-resolution. DNS address validation remains a preflight check; SECURITY.md
-records the socket-binding limitation that needs further hardening.
+The first sweep corrected IPv6 literal handling and installed configuration
+resolution. The follow-up pins validated DNS addresses into the actual socket
+lookup and bounds DNS waiting; SECURITY.md records the supported boundary.
+HTTP/TLS connector, redirect, retry and cleanup regressions pass. The suite now
+has 57 passing tests and 1 opt-in live skip; package and MCP protocol checks pass.
+
+A further live run with pinning enabled covered 26 pages on 6 sites with 0
+fetch failures and 1 metadata-only page. Compared with the older default evidence
+directory, it recorded 3 baseline, 16 unchanged and 7 changed page hashes. Those
+changes need content review before being treated as verified source changes.
+The existing canonical and discovery warnings remain.
+
+`website-content-dogfood --help` prints usage without fetching. Unknown options
+and missing option values fail before a crawl starts.

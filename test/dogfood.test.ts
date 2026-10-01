@@ -6,6 +6,12 @@ import test from "node:test";
 
 import { compareObservation, parseArgs } from "../scripts/dogfood.js";
 
+void test("invalid CLI arguments cannot silently start a default crawl", () => {
+  for (const args of [["--typo"], ["--config"], ["--data-dir", "--config", "file.json"]]) {
+    assert.throws(() => parseArgs(args), /Unknown argument|Missing value/u);
+  }
+});
+
 const observation = {
   url: "https://site.test/a",
   contentHash: "a".repeat(64),

@@ -1,5 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
+import { Agent } from "undici";
+
+import type { LookupFunction } from "node:net";
 
 export interface ResolvedAddress {
   address: string;
@@ -64,6 +67,10 @@ export async function assertPublicHttpUrl(
   rawUrl: string,
   resolver: AddressResolver = defaultResolver,
 ): Promise<void> {
+  await resolvePublicHttpUrl(rawUrl, resolver);
+}
+
+async function resolvePublicHttpUrl(rawUrl: string, resolver: AddressResolver, signal?: AbortSignal): Promise<ResolvedAddress[]> {
   const url = new URL(rawUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Only HTTP(S) destinations are permitted.");
@@ -72,19 +79,65 @@ export async function assertPublicHttpUrl(
   // URL.hostname retains brackets for IPv6 literals; dns.lookup does not accept them.
   const hostname = url.hostname.replace(/^\[|\]$/gu, "");
   const literalFamily = isIP(hostname);
-  const addresses = literalFamily > 0
+  signal?.throwIfAborted();
+  let onAbort: (() => void) | undefined;
+  const pending = literalFamily > 0
     ? [{ address: hostname, family: literalFamily }]
-    : await resolver(hostname);
+    : resolver(hostname);
+  let addresses: ResolvedAddress[];
+  try {
+    addresses = signal ? await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      }),
+    ]) : await pending;
+    signal?.throwIfAborted();
+  } finally {
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  }
 
   if (addresses.length === 0) {
     throw new Error(`Refusing outbound request because '${url.hostname}' did not resolve.`);
   }
 
   for (const resolved of addresses) {
-    if (!isPublicAddress(resolved.address)) {
+    if (!isPublicAddress(resolved.address) || isIP(resolved.address) !== resolved.family) {
       throw new Error(
         `Refusing outbound request because '${url.hostname}' resolves to a private or special-use address.`,
       );
     }
   }
+  return addresses;
+}
+
+/** Pin a request's socket lookup to the addresses checked for that destination.
+ * A fresh dispatcher is used for each redirect/retry and destroyed after its body.
+ * Keeping the original URL preserves Host, TLS SNI and certificate verification.
+ */
+export async function createPublicDispatcher(
+  rawUrl: string,
+  resolver: AddressResolver = defaultResolver,
+  signal?: AbortSignal,
+): Promise<Agent> {
+  const hostname = new URL(rawUrl).hostname.replace(/^\[|\]$/gu, "");
+  const addresses = (await resolvePublicHttpUrl(rawUrl, resolver, signal)).map(entry => ({ ...entry }));
+  const pinnedLookup: LookupFunction = (requestedHost, options, callback) => {
+    if (requestedHost !== hostname) {
+      callback(new Error("Pinned connection cannot resolve another host."), "");
+      return;
+    }
+    const family = options.family === "IPv4" ? 4 : options.family === "IPv6" ? 6 : options.family;
+    const selected = family ? addresses.filter(entry => entry.family === family) : addresses;
+    const first = selected[0];
+    if (!first) {
+      callback(new Error("No validated address for the requested family."), "");
+      return;
+    }
+    if (options.all) callback(null, selected);
+    else callback(null, first.address, first.family);
+  };
+  return new Agent({ connect: { lookup: pinnedLookup }, autoSelectFamily: true });
 }
