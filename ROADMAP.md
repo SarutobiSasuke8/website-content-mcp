@@ -1,5 +1,14 @@
 # Roadmap
 
+## Validation sweep, 2026-10-01
+
+- [x] Repeat the staged candidate's Windows checks: 47 passing tests and 1 opt-in live test skipped before the IPv6 regression was added.
+- [x] Run the 26-page owned-site baseline and repeat: no fetch failures; the repeat is unchanged with 1 metadata-only page.
+- [x] Classify bracketed IPv6 URL literals without sending them to DNS lookup; cover loopback and mapped private addresses.
+- [x] Resolve the packaged dogfood CLI's default configuration relative to its installed module, while keeping custom config and evidence paths relative to the caller.
+- [ ] Bind public-address validation to the actual socket connection before claiming protection against hostile DNS rebinding. Current checks are a DNS preflight only; see SECURITY.md.
+- [ ] Complete release review and the 30-day operational record. Two runs on one day do not satisfy that gate.
+
 Near-term items for website-content-mcp, roughly in order.
 
 ## 1. Publish the MCP Registry entry

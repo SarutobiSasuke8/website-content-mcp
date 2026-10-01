@@ -69,10 +69,12 @@ export async function assertPublicHttpUrl(
     throw new Error("Only HTTP(S) destinations are permitted.");
   }
 
-  const literalFamily = isIP(url.hostname);
+  // URL.hostname retains brackets for IPv6 literals; dns.lookup does not accept them.
+  const hostname = url.hostname.replace(/^\[|\]$/gu, "");
+  const literalFamily = isIP(hostname);
   const addresses = literalFamily > 0
-    ? [{ address: url.hostname, family: literalFamily }]
-    : await resolver(url.hostname);
+    ? [{ address: hostname, family: literalFamily }]
+    : await resolver(hostname);
 
   if (addresses.length === 0) {
     throw new Error(`Refusing outbound request because '${url.hostname}' did not resolve.`);

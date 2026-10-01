@@ -3,6 +3,14 @@ import test from "node:test";
 
 import { assertPublicHttpUrl, isPublicAddress } from "../src/network-policy.js";
 
+void test("IPv6 literals are classified directly without a DNS lookup", async () => {
+  const unexpectedLookup = async (): Promise<never> => { throw new Error("Literal must not use DNS"); };
+  await assert.doesNotReject(() => assertPublicHttpUrl("https://[2606:4700:4700::1111]/", unexpectedLookup));
+  for (const address of ["::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "fd00::1"]) {
+    await assert.rejects(() => assertPublicHttpUrl(`https://[${address}]/`, unexpectedLookup), /private or special-use/u);
+  }
+});
+
 void test("public-address policy blocks local, private, link-local and metadata-style ranges", () => {
   for (const address of [
     "127.0.0.1",

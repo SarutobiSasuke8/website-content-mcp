@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { loadConfig } from "../src/config.js";
 import { createRuntime } from "../src/runtime.js";
@@ -235,15 +235,17 @@ function markdownReport(run: DogfoodRun): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
-function parseArgs(argv: string[]): { configFile: string; dataDir: string } {
-  let configFile = "dogfood/owned-sites.json";
+export function parseArgs(argv: string[], cwd = process.cwd()): { configFile: string; dataDir: string } {
+  // This CLI ships in dist/scripts; its default config belongs to the package,
+  // while an explicit config and all output paths belong to the caller.
+  let configFile = fileURLToPath(new URL("../../dogfood/owned-sites.json", import.meta.url));
   let dataDir = ".dogfood-data";
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--config" && argv[index + 1]) configFile = argv[++index] ?? configFile;
     else if (value === "--data-dir" && argv[index + 1]) dataDir = argv[++index] ?? dataDir;
   }
-  return { configFile: path.resolve(configFile), dataDir: path.resolve(dataDir) };
+  return { configFile: path.resolve(cwd, configFile), dataDir: path.resolve(cwd, dataDir) };
 }
 
 export async function runDogfood(configFile: string, dataDir: string): Promise<DogfoodRun> {
