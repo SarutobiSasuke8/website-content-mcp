@@ -3,6 +3,33 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-28
+
+### Security
+
+- Resolve configured destinations before each request and redirect hop and
+  refuse private, loopback, link-local and special-use addresses by default.
+  Deliberate internal-site deployments can opt in with
+  `FETCH_ALLOW_PRIVATE_NETWORK=true`.
+- Label page results as `untrusted-web-content` and state in the MCP tool
+  contract that fetched text is source data, never agent instructions.
+
+### Added
+
+- Extraction method, quality and warnings on every page result, including a
+  metadata-only fallback for client-rendered shells that previously returned
+  empty Markdown.
+- Discovery warnings for HTML masquerading as `robots.txt` or `sitemap.xml`.
+- A bounded snapshot-and-diff dogfood runner that stores hashes, validators and
+  quality evidence without retaining page bodies.
+
+### Fixed
+
+- Preserve spacing between adjacent utility-class block spans, preventing
+  headings such as `forInstitutions` in extracted Markdown.
+- Keep the MCP runtime, package and registry versions aligned through a
+  release-workflow guard.
+
 ## [0.3.1] — 2026-08-16
 
 ### Documentation

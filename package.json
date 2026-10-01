@@ -1,6 +1,6 @@
 {
   "name": "@sarutobi-sasuke/website-content-mcp",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "MCP server exposing website content in agent-readable structured form.",
   "license": "MIT",
   "homepage": "https://github.com/SarutobiSasuke8/website-content-mcp#readme",
@@ -26,16 +26,19 @@
   ],
   "bin": {
     "website-content-http": "dist/src/http.js",
-    "website-content-stdio": "dist/src/stdio.js"
+    "website-content-stdio": "dist/src/stdio.js",
+    "website-content-dogfood": "dist/scripts/dogfood.js"
   },
   "files": [
     "dist/src",
+    "dist/scripts",
     "README.md",
     "LICENSE",
     "SECURITY.md",
     "server.json",
     "docs",
-    "deploy"
+    "deploy",
+    "dogfood"
   ],
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env --import tsx src/http.ts",
@@ -49,6 +52,7 @@
     "check": "npm run typecheck && npm run lint && npm test",
     "pack:check": "npm pack --dry-run",
     "smoke:mcp": "npx -y @modelcontextprotocol/inspector@2.1.0 --cli --config test/fixtures/mcp-smoke.json --server website-content --method tools/list",
+    "dogfood": "npm run build && node dist/scripts/dogfood.js",
     "prepublishOnly": "npm run check"
   },
   "dependencies": {
@@ -60,6 +64,7 @@
     "helmet": "8.3.0",
     "jsdom": "26.1.0",
     "turndown": "7.2.0",
+    "undici": "7.30.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

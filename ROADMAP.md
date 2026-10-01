@@ -1,5 +1,15 @@
 # Roadmap
 
+## Validation sweep, 2026-10-01
+
+- [x] Repeat the staged candidate's Windows checks: 47 passing tests and 1 opt-in live test skipped before the IPv6 regression was added.
+- [x] Run the 26-page owned-site baseline and repeat: no fetch failures; the repeat is unchanged with 1 metadata-only page.
+- [x] Classify bracketed IPv6 URL literals without sending them to DNS lookup; cover loopback and mapped private addresses.
+- [x] Resolve the packaged dogfood CLI's default configuration relative to its installed module, while keeping custom config and evidence paths relative to the caller.
+- [x] Bind validated DNS snapshots to actual HTTP/TLS socket lookup, revalidate redirects/retries, bound DNS waiting and dispose response/connection resources. Connector regressions and a 26-page live run passed; see SECURITY.md for the supported boundary.
+- [x] Make dogfood `--help` exit without fetching and reject unknown/missing CLI arguments.
+- [ ] Complete release review and the 30-day operational record. Two runs on one day do not satisfy that gate.
+
 Near-term items for website-content-mcp, roughly in order.
 
 ## 1. Publish the MCP Registry entry
@@ -17,17 +27,16 @@ updated `server.json` to the MCP Registry after the npm publish succeeds, so
 the registry version can never drift from npm. The workflow already verifies
 that `server.json` matches `package.json` before publishing.
 
-## 3. Deployed reference instance for astraeus.ie
+## 3. Keep the astraeus.ie reference deployment verified
 
-Stand up a public reference deployment serving `https://astraeus.ie` using
-`deploy/website-content-mcp@.service` and `deploy/nginx.conf.example`, and run
-the verification checklist in `docs/production-deployment.md` end to end
-against it. This gives the README a live, linkable example instance.
+The public read-only reference deployment at `https://mcp.astraeus.ie/mcp` is
+live. Keep it in the release verification set and document the public endpoint
+as the reference implementation after each deployed package upgrade.
 
-## 4. Document pairing with a scheduler/snapshot workflow
+## 4. Complete the owned-site dogfood proof
 
-The README names scheduling, snapshots, diffs and alerts as out of scope: this
-server is the content-access layer only. Add a short guide (or example repo)
-showing how to pair it with a scheduler and snapshot store to build the
-monitoring workflows the README alludes to, without widening this server's own
-scope.
+The repository now includes `npm run dogfood`, a bounded snapshot-and-diff
+validation harness, and `docs/dogfood-monitoring.md`. Run the owned-site set for
+30 days and retain evidence of meaningful changes, false changes, extraction
+failures and decisions influenced before commissioning a production scheduler
+or making monitoring claims.

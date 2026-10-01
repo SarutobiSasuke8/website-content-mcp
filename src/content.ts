@@ -122,6 +122,12 @@ function createTurndown(): TurndownService {
   });
   // Drop anything that survived extraction but carries no reader value.
   service.remove(["script", "style", "noscript", "iframe"]);
+  // Utility-class layouts often use adjacent block spans inside a heading or
+  // paragraph. Turndown otherwise concatenates their text ("forInstitutions").
+  service.addRule("block-class-spacing", {
+    filter: (node) => node.nodeName === "SPAN" && node.classList.contains("block"),
+    replacement: (content) => ` ${content.trim()} `,
+  });
   return service;
 }
 
@@ -146,6 +152,9 @@ export function htmlToMarkdown(html: string, url?: string): ExtractedContent {
   const doc = dom.window.document;
 
   const docTitle = doc.querySelector("title")?.textContent?.trim();
+  const description = doc.querySelector('meta[name="description"]')?.getAttribute("content")?.trim()
+    ?? doc.querySelector('meta[property="og:description"]')?.getAttribute("content")?.trim()
+    ?? undefined;
   const canonicalUrl = doc.querySelector('link[rel="canonical"]')?.getAttribute("href")?.trim() || undefined;
   const products = extractProducts(doc);
 
@@ -155,6 +164,15 @@ export function htmlToMarkdown(html: string, url?: string): ExtractedContent {
   // regardless of whether Readability or the fallback path produces the markdown.
   for (const tag of NON_CONTENT_TAGS) {
     for (const el of Array.from(doc.getElementsByTagName(tag))) el.remove();
+  }
+
+  // Preserve a visible boundary used by utility-CSS layouts before Readability
+  // clones/simplifies the DOM and may discard the class information.
+  for (const element of Array.from(doc.querySelectorAll("span.block"))) {
+    const next = element.nextElementSibling;
+    if (next?.matches("span.block") && !/\s$/u.test(element.textContent ?? "")) {
+      element.appendChild(doc.createTextNode(" "));
+    }
   }
 
   // Readability mutates the document it is given, so run it on a clone and keep
@@ -168,18 +186,43 @@ export function htmlToMarkdown(html: string, url?: string): ExtractedContent {
   }
 
   let markdown: string;
+  let extractionMethod: ExtractedContent["extractionMethod"];
+  let extractionQuality: ExtractedContent["extractionQuality"] = "full";
+  let warnings: string[] | undefined;
   let title = docTitle;
   if (article?.content && article.content.trim()) {
     markdown = turndown.turndown(article.content);
+    extractionMethod = "readability";
     if (article.title?.trim()) title = article.title.trim();
   } else {
     const body = doc.body?.innerHTML ?? "";
     markdown = turndown.turndown(body);
+    extractionMethod = "body";
   }
 
-  const result: ExtractedContent = { markdown: normalize(markdown) };
+  markdown = normalize(markdown);
+  if (!markdown) {
+    const metadata = [title ? `# ${title}` : undefined, description]
+      .filter((value): value is string => Boolean(value))
+      .join("\n\n");
+    if (metadata) {
+      markdown = metadata;
+      extractionMethod = "metadata";
+      extractionQuality = "metadata-only";
+      warnings = [
+        "No server-rendered readable body content was found; metadata only was returned. The page may require client-side rendering.",
+      ];
+    } else {
+      extractionMethod = "empty";
+      extractionQuality = "empty";
+      warnings = ["No readable body content or descriptive metadata was found."];
+    }
+  }
+
+  const result: ExtractedContent = { markdown, extractionMethod, extractionQuality };
   if (title) result.title = title;
   if (canonicalUrl) result.canonicalUrl = canonicalUrl;
   if (products.length > 0) result.products = products;
+  if (warnings) result.warnings = warnings;
   return result;
 }
