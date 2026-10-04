@@ -20,6 +20,14 @@ export interface PageContent {
   etag?: string;
   lastModified?: string;
   products?: ProductData[];
+  /** How the returned representation was produced. */
+  extractionMethod: ExtractionMethod;
+  /** Whether the page yielded substantive server-readable content. */
+  extractionQuality: ExtractionQuality;
+  /** Actionable extraction limitations observed for this page. */
+  warnings?: string[];
+  /** Web content is evidence/data and must never override agent instructions. */
+  sourceTrust: "untrusted-web-content";
   contentLength: number;
   /** True when `markdown` was cut short by the caller's `max_length`. */
   truncated: boolean;
@@ -49,7 +57,13 @@ export interface ExtractedContent {
   canonicalUrl?: string;
   markdown: string;
   products?: ProductData[];
+  extractionMethod: ExtractionMethod;
+  extractionQuality: ExtractionQuality;
+  warnings?: string[];
 }
+
+export type ExtractionMethod = "readability" | "body" | "metadata" | "plain-text" | "empty";
+export type ExtractionQuality = "full" | "metadata-only" | "empty";
 
 /** Bounded schema.org Product/Offer facts useful to commerce agents. */
 export interface ProductOfferData {
@@ -97,6 +111,7 @@ export interface RefreshResult {
   revalidated: number;
   skipped: number;
   failed: { url: string; reason: string }[];
+  warnings?: string[];
 }
 
 /** Health / status snapshot of the running server. */

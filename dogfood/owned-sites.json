@@ -1,0 +1,10 @@
+{
+  "sites": [
+    { "name": "Gryps", "baseUrl": "https://gryps.finance", "pageLimit": 5 },
+    { "name": "Astraeus", "baseUrl": "https://astraeus.ie", "pageLimit": 5 },
+    { "name": "Alexei Udall", "baseUrl": "https://alexeiudall.com", "pageLimit": 5 },
+    { "name": "Cryptic GG", "baseUrl": "https://crypticgg.xyz", "pageLimit": 5 },
+    { "name": "Rokumon Games", "baseUrl": "https://rokumongames.com", "pageLimit": 5 },
+    { "name": "Metaverse Solutions", "baseUrl": "https://metaversesolutions.xyz", "pageLimit": 1 }
+  ]
+}

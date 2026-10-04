@@ -65,11 +65,13 @@ summarize a verified difference.
 
 - **Clean extraction** — HTML → markdown via [Mozilla Readability](https://github.com/mozilla/readability) + [Turndown](https://github.com/mixmark-io/turndown) (real DOM parsing, never regex). Extraction runs once per page and is cached.
 - **Deterministic change evidence** — each page includes a SHA-256 of the complete normalized markdown plus upstream `ETag` / `Last-Modified` validators when available.
+- **Extraction-quality evidence** — results state whether content came from Readability, the cleaned body, plain text or metadata-only fallback, with actionable warnings for client-rendered shells.
 - **Commerce-aware metadata** — bounded schema.org `Product` / `Offer` JSON-LD is returned as structured product, SKU, GTIN, brand, price, currency and availability facts.
 - **Discovery** — page listing from `sitemap.xml`, sitemaps advertised in `robots.txt`, or a configured page list.
 - **Disk cache** — fetched pages cached with a configurable TTL and a size bound; reads prefer cache, then a conditional revalidation, then stale-on-error.
 - **Polite by default** — respects `robots.txt` disallow rules, rate-limits to ~1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
 - **Scoped to one site** — fetches are refused for any host outside the configured site.
+- **Public-network safe by default** — allowed hostnames are resolved before every request and redirect hop; private, loopback, link-local and special-use destinations require an explicit operator opt-in.
 - **Two transports** — Streamable HTTP and stdio.
 
 ## What a page result looks like
@@ -89,6 +91,9 @@ provide them.
   "truncated": false,
   "fetchedAt": "2026-08-16T16:00:00.000Z",
   "fromCache": false,
+  "extractionMethod": "readability",
+  "extractionQuality": "full",
+  "sourceTrust": "untrusted-web-content",
   "etag": "W/\"widget-v4\"",
   "lastModified": "Sat, 16 Aug 2026 12:00:00 GMT",
   "products": [{
@@ -162,7 +167,8 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `FETCH_MIN_INTERVAL_MS` | | `1000` | Minimum spacing between fetches (~1 req/sec). |
 | `FETCH_MAX_BYTES` | | `5000000` | Hard cap on a single response body. |
 | `FETCH_MAX_RETRIES` | | `1` | Retries on 429/503, honouring `Retry-After`. |
-| `USER_AGENT` | | `website-content-mcp/0.3 …` | Outbound User-Agent. |
+| `FETCH_ALLOW_PRIVATE_NETWORK` | | `false` | Permit configured hosts to resolve to private/special-use IPs. Use only for deliberate internal-site deployments. |
+| `USER_AGENT` | | `website-content-mcp/0.4.0 …` | Outbound User-Agent. |
 | `HOST` | | `127.0.0.1` | HTTP bind host. |
 | `PORT` | | `3215` | HTTP bind port. |
 | `HTTP_ALLOW_REFRESH` | | `false` | Expose `content_refresh` and permit forced origin revalidation over HTTP. Enable only behind an authenticated or restricted reverse proxy. Stdio always permits refresh. |
@@ -236,6 +242,27 @@ RUN_LIVE_TESTS=1 LIVE_SITE_URLS=https://astraeus.ie npm test
 
 Without `LIVE_SITE_URLS`, the live check falls back to `https://example.com`.
 
+## Dogfood monitoring
+
+The source repository includes a bounded snapshot-and-diff proof harness. It
+stores hashes, validators, extraction quality and warnings without retaining
+page bodies:
+
+```bash
+npm run dogfood
+npm run dogfood
+```
+
+The first run establishes baselines and the second reports unchanged or
+changed pages. See [`docs/dogfood-monitoring.md`](./docs/dogfood-monitoring.md).
+Scheduling, production retention and alert routing remain outside the core.
+
+The published CLI can run the same bounded proof without a source checkout:
+
+```bash
+npx -y -p @sarutobi-sasuke/website-content-mcp website-content-dogfood
+```
+
 ## Security & etiquette
 
 - Binds to `127.0.0.1` by default.
@@ -245,6 +272,11 @@ Without `LIVE_SITE_URLS`, the live check falls back to `https://example.com`.
   `SITE_ALLOWED_HOSTS`.
 - Redirects are followed manually and every destination is checked against the
   same host allowlist before a network request is made.
+- DNS results are checked before each request and redirect hop; private,
+  loopback, link-local and special-use destinations are refused unless
+  `FETCH_ALLOW_PRIVATE_NETWORK=true` is explicitly set by the operator.
+- Returned page text is labelled `untrusted-web-content`; clients must treat it
+  as source data, never as instructions that override their own policy.
 - Streamable HTTP defaults to a read-only tool surface. Keep
   `HTTP_ALLOW_REFRESH=false` for anonymous deployments.
 - Respects `robots.txt`, fetched and enforced per origin; disallowed paths are refused.

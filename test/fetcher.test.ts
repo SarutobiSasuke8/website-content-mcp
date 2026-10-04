@@ -167,3 +167,25 @@ void test("fetch refuses a redirect outside the configured host allowlist", asyn
     },
   );
 });
+
+void test("fetch validates the network destination before every redirect hop", async () => {
+  const validated: string[] = [];
+  await withFetch(
+    (url) => Promise.resolve(
+      url === "https://site.test/start"
+        ? new Response(null, { status: 302, headers: { location: "/final" } })
+        : new Response("<html><body>done</body></html>", { status: 200 }),
+    ),
+    async () => {
+      const fetcher = new Fetcher({
+        ...options,
+        isUrlAllowed: (url) => new URL(url).hostname === "site.test",
+        assertUrlAllowed: (url) => {
+          validated.push(url);
+        },
+      });
+      await fetcher.fetch("https://site.test/start");
+      assert.deepEqual(validated, ["https://site.test/start", "https://site.test/final"]);
+    },
+  );
+});

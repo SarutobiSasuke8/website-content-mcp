@@ -35,6 +35,33 @@ void test("htmlToMarkdown falls back to body stripping for tiny pages", () => {
   assert.match(result.markdown, /Hello world content\./u);
   assert.doesNotMatch(result.markdown, /doBadThings/u);
   assert.doesNotMatch(result.markdown, /SkipNav/u);
+  assert.ok(["readability", "body"].includes(result.extractionMethod));
+  assert.equal(result.extractionQuality, "full");
+});
+
+void test("htmlToMarkdown returns labelled metadata for client-rendered shells", () => {
+  const html = `<html><head><title>Client App</title>
+    <meta name="description" content="Useful agent-facing summary."></head>
+    <body><div id="root"></div><script src="/app.js"></script></body></html>`;
+  const result = htmlToMarkdown(html, "https://app.test/");
+
+  assert.equal(result.extractionMethod, "metadata");
+  assert.equal(result.extractionQuality, "metadata-only");
+  assert.match(result.markdown, /# Client App/u);
+  assert.match(result.markdown, /Useful agent-facing summary/u);
+  assert.match(result.warnings?.[0] ?? "", /client-side rendering/u);
+});
+
+void test("htmlToMarkdown preserves boundaries between utility-class block spans", () => {
+  const html = `<html><body><main><article><h2><span class="block">Perp Trading for</span><span class="block">Institutions and Pros</span></h2>
+    <p>This paragraph is long enough to give the extractor a stable content region for this regression test.</p>
+    <p>Professional traders keep custody while solvers compete to provide firm quotes across several venues.</p>
+    <p>Additional explanatory copy ensures the heading remains part of the article selected by Readability.</p>
+    </article></main></body></html>`;
+  const result = htmlToMarkdown(html);
+
+  assert.match(result.markdown, /for\s+Institutions/u);
+  assert.doesNotMatch(result.markdown, /forInstitutions/u);
 });
 
 void test("htmlToMarkdown converts links and lists to markdown syntax", async () => {

@@ -1,4 +1,5 @@
 import type { FetchRecord } from "./types.js";
+import type { Dispatcher } from "undici";
 
 export interface FetcherOptions {
   timeoutMs: number;
@@ -8,6 +9,10 @@ export interface FetcherOptions {
   userAgent: string;
   /** Validate every outbound destination, including redirect targets. */
   isUrlAllowed?: (url: string) => boolean;
+  /** Resolve and validate the network destination before every request. */
+  assertUrlAllowed?: (url: string) => Promise<void> | void;
+  /** Supply a destination-bound connection pool. The fetcher owns its disposal. */
+  createDispatcher?: (url: string, signal: AbortSignal) => Promise<Dispatcher>;
 }
 
 /** Cache validators replayed as conditional request headers. */
@@ -47,6 +52,13 @@ export class Fetcher {
   private lastStart = 0;
 
   public constructor(private readonly options: FetcherOptions) {}
+
+  private async assertAllowed(url: string): Promise<void> {
+    if (this.options.isUrlAllowed && !this.options.isUrlAllowed(url)) {
+      throw new Error("Refusing outbound request to a URL outside the configured host allowlist.");
+    }
+    await this.options.assertUrlAllowed?.(url);
+  }
 
   private async pace(): Promise<void> {
     const wait = this.lastStart + this.options.minIntervalMs - Date.now();
@@ -107,9 +119,7 @@ export class Fetcher {
     let currentConditional = conditional;
 
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      if (this.options.isUrlAllowed && !this.options.isUrlAllowed(currentUrl)) {
-        throw new Error(`Refusing outbound request to a URL outside the configured host allowlist.`);
-      }
+      await this.assertAllowed(currentUrl);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
@@ -120,9 +130,17 @@ export class Fetcher {
       if (currentConditional.etag) headers["if-none-match"] = currentConditional.etag;
       if (currentConditional.lastModified) headers["if-modified-since"] = currentConditional.lastModified;
 
+      let dispatcher: Dispatcher | undefined;
       try {
-        const response = await fetch(currentUrl, { signal: controller.signal, redirect: "manual", headers });
+        dispatcher = await this.options.createDispatcher?.(currentUrl, controller.signal);
+        controller.signal.throwIfAborted();
+        const init: RequestInit & { dispatcher?: Dispatcher } = {
+          signal: controller.signal, redirect: "manual", headers,
+          ...(dispatcher ? { dispatcher } : {}),
+        };
+        const response = await fetch(currentUrl, init);
         if (REDIRECT_STATUSES.has(response.status)) {
+          await response.body?.cancel();
           const location = response.headers.get("location");
           if (!location) throw new Error(`Redirect from '${currentUrl}' did not include a Location header.`);
           if (redirectCount >= MAX_REDIRECTS) throw new Error(`Too many redirects while fetching '${url}'.`);
@@ -156,6 +174,7 @@ export class Fetcher {
         return { record, retryAfter: response.headers.get("retry-after") };
       } finally {
         clearTimeout(timer);
+        await dispatcher?.destroy();
       }
     }
 

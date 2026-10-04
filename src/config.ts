@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { PACKAGE_VERSION } from "./version.js";
+
 /**
  * Environment configuration for the website content MCP server.
  *
@@ -20,7 +22,8 @@ const envSchema = z.object({
   FETCH_MIN_INTERVAL_MS: z.coerce.number().int().min(0).max(60_000).default(1_000),
   FETCH_MAX_BYTES: z.coerce.number().int().min(1_024).max(50_000_000).default(5_000_000),
   FETCH_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(1),
-  USER_AGENT: z.string().default("website-content-mcp/0.3 (+https://github.com/SarutobiSasuke8/website-content-mcp)"),
+  USER_AGENT: z.string().default(`website-content-mcp/${PACKAGE_VERSION} (+https://github.com/SarutobiSasuke8/website-content-mcp)`),
+  FETCH_ALLOW_PRIVATE_NETWORK: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_215),
   HTTP_ALLOW_REFRESH: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
@@ -46,6 +49,8 @@ export interface AppConfig {
   fetchMaxBytes: number;
   fetchMaxRetries: number;
   userAgent: string;
+  /** Permit explicitly configured hosts to resolve to private/special IPs. */
+  fetchAllowPrivateNetwork: boolean;
   host: string;
   port: number;
   /** Expose origin-revalidating tools on Streamable HTTP. Off by default. */
@@ -103,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     fetchMaxBytes: parsed.FETCH_MAX_BYTES,
     fetchMaxRetries: parsed.FETCH_MAX_RETRIES,
     userAgent: parsed.USER_AGENT,
+    fetchAllowPrivateNetwork: parsed.FETCH_ALLOW_PRIVATE_NETWORK,
     host: parsed.HOST,
     port: parsed.PORT,
     httpAllowRefresh: parsed.HTTP_ALLOW_REFRESH,

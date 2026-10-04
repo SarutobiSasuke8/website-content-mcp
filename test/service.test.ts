@@ -163,6 +163,33 @@ void test("search ignores cached sitemaps and robots files", async () => {
   });
 });
 
+void test("discovery reports HTML masquerading as robots.txt and sitemap.xml", async () => {
+  await withTempDir(async (dir) => {
+    const htmlShell = "<html><head><title>Fallback</title></head><body><div id=\"root\"></div></body></html>";
+    const brokenRoutes = routes();
+    brokenRoutes["https://site.test/robots.txt"] = { status: 200, body: htmlShell, contentType: "text/html" };
+    brokenRoutes["https://site.test/sitemap.xml"] = { status: 200, body: htmlShell, contentType: "text/html" };
+    const { service } = makeService(new FakeFetcher(brokenRoutes), dir);
+
+    const discovery = await service.listPages(10);
+    assert.equal(discovery.source, "configured");
+    assert.equal(discovery.pages.length, 1);
+    assert.equal(discovery.warnings.length, 2);
+    assert.match(discovery.warnings.join("\n"), /recognizable XML sitemap/u);
+    assert.match(discovery.warnings.join("\n"), /returned HTML instead of a robots\.txt/u);
+  });
+});
+
+void test("page results label untrusted source content and extraction quality", async () => {
+  await withTempDir(async (dir) => {
+    const { service } = makeService(new FakeFetcher(routes()), dir);
+    const page = await service.getPage("/a");
+    assert.equal(page.sourceTrust, "untrusted-web-content");
+    assert.equal(page.extractionQuality, "full");
+    assert.ok(["readability", "body"].includes(page.extractionMethod));
+  });
+});
+
 void test("a stale entry is revalidated conditionally and reused on 304", async () => {
   await withTempDir(async (dir) => {
     const fetcher = new FakeFetcher(routes());
