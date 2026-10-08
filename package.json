@@ -52,6 +52,7 @@
     "check": "npm run typecheck && npm run lint && npm test",
     "pack:check": "npm pack --dry-run",
     "smoke:mcp": "npx -y @modelcontextprotocol/inspector@2.1.0 --cli --config test/fixtures/mcp-smoke.json --server website-content --method tools/list",
+    "eval:contract": "npm run build && mcp-eval eval/mcp.suite.yaml",
     "dogfood": "npm run build && node dist/scripts/dogfood.js",
     "prepublishOnly": "npm run check"
   },
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",
+    "@sarutobi-sasuke/mcp-eval-harness": "github:SarutobiSasuke8/mcp-eval-harness#077c74a60ccd6d9061e35f882ffd3db5f5d17052",
     "@types/express": "5.0.6",
     "@types/jsdom": "21.1.7",
     "@types/node": "22.19.15",

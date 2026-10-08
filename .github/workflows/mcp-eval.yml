@@ -1,0 +1,27 @@
+name: mcp-eval
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Harness pinned to the v1 PR head (mcp-eval-harness #6). Repin to the merged main SHA,
+      # here and in package.json, after mcp-eval-harness PRs #5 and #6 merge.
+      - uses: SarutobiSasuke8/mcp-eval-harness@077c74a60ccd6d9061e35f882ffd3db5f5d17052
+        with:
+          suite: eval/mcp.suite.yaml
+          node-version: ""

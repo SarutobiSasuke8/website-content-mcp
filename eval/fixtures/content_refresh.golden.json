@@ -1,0 +1,10 @@
+{
+  "refresh": {
+    "failed": [],
+    "fetched": 2,
+    "requested": 4,
+    "revalidated": 1,
+    "skipped": 1,
+    "source": "sitemap"
+  }
+}

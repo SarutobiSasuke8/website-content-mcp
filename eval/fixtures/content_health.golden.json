@@ -1,0 +1,15 @@
+{
+  "health": {
+    "allowedHosts": [
+      "127.0.0.1:3298"
+    ],
+    "baseUrl": "http://127.0.0.1:3298/",
+    "cacheBytes": 0,
+    "cacheEntries": 0,
+    "cacheMaxEntries": 500,
+    "cacheTtlSeconds": 3600,
+    "configuredPages": 0,
+    "sitemapUrl": "http://127.0.0.1:3298/sitemap.xml",
+    "status": "ok"
+  }
+}
