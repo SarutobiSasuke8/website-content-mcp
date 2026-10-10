@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "max_length": {
+      "default": 50000,
+      "description": "Maximum markdown characters to return. `content_length` always reports the full size.",
+      "maximum": 500000,
+      "minimum": 500,
+      "type": "integer"
+    },
+    "refresh": {
+      "default": false,
+      "description": "Bypass the cache TTL and revalidate against the origin.",
+      "type": "boolean"
+    },
+    "url": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "type": "object"
+}

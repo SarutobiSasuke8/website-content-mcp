@@ -1,0 +1,135 @@
+# mcp-eval contract suite for website-content-mcp.
+# Run with `npm run eval:contract` (builds first). Paths resolve relative to this file, and the
+# stdio server runs with this directory as its working directory.
+#
+# Offline by construction: fixture-site.mjs is preloaded into the stdio server and serves
+# fixtures/site on http://127.0.0.1:3298, the only allowed host. Every happy path reads that
+# local site; deny paths are refused before any request leaves the process. The cache lives in
+# eval/.cache (git-ignored) and is emptied at start, so runs are deterministic.
+#
+# The harness runs contracts in order on one connection. content_refresh warms the cache for
+# content_search, and content_health runs first while the cache is still cold.
+# No secrets: every env value below is synthetic.
+version: 1
+name: website-content-mcp
+timeout_ms: 20000
+target:
+  transport: stdio
+  command: ["node", "--import", "./fixture-site.mjs", "../dist/src/stdio.js"]
+  env:
+    SITE_BASE_URL: http://127.0.0.1:3298/
+    FETCH_ALLOW_PRIVATE_NETWORK: "true"
+    FETCH_MIN_INTERVAL_MS: "0"
+    FETCH_TIMEOUT_MS: "5000"
+    FETCH_MAX_RETRIES: "0"
+    USER_AGENT: website-content-mcp-eval/1.0 (synthetic)
+contracts:
+  # exact: true fails if a tool is added or removed without updating this contract.
+  - name: tools_listed
+    expect_tools:
+      - content_health
+      - content_list_pages
+      - content_get_page
+      - content_refresh
+      - content_search
+      - content_get_sitemap
+    exact: true
+
+  - name: input_schemas
+    input_schema:
+      content_health: fixtures/content_health.input.schema.json
+      content_list_pages: fixtures/content_list_pages.input.schema.json
+      content_get_page: fixtures/content_get_page.input.schema.json
+      content_refresh: fixtures/content_refresh.input.schema.json
+      content_search: fixtures/content_search.input.schema.json
+      content_get_sitemap: fixtures/content_get_sitemap.input.schema.json
+
+  # cacheDir is an absolute, machine-specific path, so it is left out of the comparison.
+  - name: health_cold_cache_golden
+    tool: content_health
+    input: {}
+    assert:
+      golden:
+        path: fixtures/content_health.golden.json
+        ignore_paths: [health.cacheDir, health.lastFetchAt]
+
+  - name: get_sitemap_golden
+    tool: content_get_sitemap
+    input: {}
+    assert:
+      golden: fixtures/content_get_sitemap.golden.json
+
+  - name: list_pages_golden
+    tool: content_list_pages
+    input: { limit: 10 }
+    assert:
+      golden: fixtures/content_list_pages.golden.json
+
+  - name: get_page_golden
+    tool: content_get_page
+    input: { url: "/pricing.html" }
+    assert:
+      golden:
+        path: fixtures/content_get_page.golden.json
+        ignore_paths: [page.fetchedAt]
+
+  - name: refresh_golden
+    tool: content_refresh
+    input: { limit: 10 }
+    assert:
+      golden: fixtures/content_refresh.golden.json
+
+  - name: search_golden
+    tool: content_search
+    input: { query: "sourdough", limit: 5 }
+    assert:
+      golden: fixtures/content_search.golden.json
+
+  # Deny and fail-closed paths.
+  - name: deny_off_host_url
+    tool: content_get_page
+    input: { url: "https://example.com/" }
+    assert:
+      is_error: true
+      error_message: "host is not in the allowed list"
+
+  - name: deny_other_local_port
+    tool: content_get_page
+    input: { url: "http://127.0.0.1:3299/" }
+    assert:
+      is_error: true
+      error_message: "host is not in the allowed list"
+
+  - name: deny_non_http_scheme
+    tool: content_get_page
+    input: { url: "file:///etc/passwd" }
+    assert:
+      is_error: true
+      error_message: "Refusing to fetch 'file:///etc/passwd'"
+
+  - name: deny_robots_disallowed
+    tool: content_get_page
+    input: { url: "/private/staff.html" }
+    assert:
+      is_error: true
+      error_message: "disallowed by the site's robots.txt"
+
+  - name: deny_list_pages_over_limit
+    tool: content_list_pages
+    input: { limit: 1001 }
+    assert:
+      is_error: true
+      error_message: "limit"
+
+  - name: deny_get_page_max_length_too_small
+    tool: content_get_page
+    input: { url: "/", max_length: 10 }
+    assert:
+      is_error: true
+      error_message: "max_length"
+
+  - name: unknown_tool_is_invalid_params
+    tool: content_delete_page
+    input: {}
+    assert:
+      error_code: INVALID_PARAMS

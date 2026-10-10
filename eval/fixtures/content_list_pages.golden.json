@@ -1,0 +1,29 @@
+{
+  "pages": [
+    {
+      "lastModified": "2026-10-01",
+      "priority": 1,
+      "source": "sitemap",
+      "url": "http://127.0.0.1:3298/"
+    },
+    {
+      "lastModified": "2026-09-15",
+      "priority": 0.6,
+      "source": "sitemap",
+      "url": "http://127.0.0.1:3298/about.html"
+    },
+    {
+      "lastModified": "2026-09-20",
+      "priority": 0.8,
+      "source": "sitemap",
+      "url": "http://127.0.0.1:3298/pricing.html"
+    },
+    {
+      "lastModified": "2026-09-01",
+      "source": "sitemap",
+      "url": "http://127.0.0.1:3298/private/staff.html"
+    }
+  ],
+  "source": "sitemap",
+  "warnings": []
+}
