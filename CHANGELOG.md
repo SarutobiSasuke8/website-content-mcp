@@ -14,6 +14,9 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- Create a fresh MCP server and transport for each HTTP request. SDK 2.3.1
+  and later refuse to reuse a stateless transport, which made every request
+  after `initialize` fail with HTTP 500. An HTTP regression test now covers it.
 - Keep HTTP sockets open long enough for clients to reuse them between MCP
   initialization and their first tool request; align the nginx example timeout.
 - Describe `content_refresh` only in modes where that tool is exposed.
