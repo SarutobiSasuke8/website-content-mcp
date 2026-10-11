@@ -127,4 +127,5 @@ export interface HealthStatus {
   cacheEntries: number;
   cacheBytes: number;
   lastFetchAt?: string;
+  lastRefreshAt: string | null;
 }

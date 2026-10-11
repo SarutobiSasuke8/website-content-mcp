@@ -27,7 +27,12 @@ const envSchema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3_215),
   HTTP_ALLOW_REFRESH: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
-  STARTUP_REFRESH_LIMIT: z.coerce.number().int().min(0).max(500).default(0),
+  HTTP_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+  HTTP_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().min(1).max(100_000).default(60),
+  /** Express proxy-addr syntax: IPs/CIDRs or aliases such as `loopback`. */
+  HTTP_TRUST_PROXY: z.string().default(""),
+  STARTUP_REFRESH_LIMIT: z.coerce.number().int().min(0).max(500).default(50),
+  HTTP_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(300),
 });
 
 function csv(value: string | undefined): string[] {
@@ -55,8 +60,15 @@ export interface AppConfig {
   port: number;
   /** Expose origin-revalidating tools on Streamable HTTP. Off by default. */
   httpAllowRefresh: boolean;
-  /** Warm this many discoverable pages after HTTP starts; zero disables. */
+  /** Per-client HTTP request quota for /mcp. */
+  httpRateLimitWindowMs: number;
+  httpRateLimitMaxRequests: number;
+  /** Trusted reverse proxies allowed to supply X-Forwarded-For. Empty means none. */
+  httpTrustedProxies: string[];
+  /** Pages warmed at startup and each scheduled pass; zero disables auto-refresh. */
   startupRefreshLimit: number;
+  /** Period between scheduled HTTP cache refreshes; zero disables periodic refresh. */
+  httpRefreshIntervalSeconds: number;
 }
 
 /**
@@ -112,6 +124,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: parsed.HOST,
     port: parsed.PORT,
     httpAllowRefresh: parsed.HTTP_ALLOW_REFRESH,
+    httpRateLimitWindowMs: parsed.HTTP_RATE_LIMIT_WINDOW_MS,
+    httpRateLimitMaxRequests: parsed.HTTP_RATE_LIMIT_MAX_REQUESTS,
+    httpTrustedProxies: csv(parsed.HTTP_TRUST_PROXY),
     startupRefreshLimit: parsed.STARTUP_REFRESH_LIMIT,
+    httpRefreshIntervalSeconds: parsed.HTTP_REFRESH_INTERVAL_SECONDS,
   };
 }
