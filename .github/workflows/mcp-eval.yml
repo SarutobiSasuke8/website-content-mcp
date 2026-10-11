@@ -19,9 +19,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # Harness pinned to the v1 PR head (mcp-eval-harness #6). Repin to the merged main SHA,
-      # here and in package.json, after mcp-eval-harness PRs #5 and #6 merge.
-      - uses: SarutobiSasuke8/mcp-eval-harness@077c74a60ccd6d9061e35f882ffd3db5f5d17052
+      # Harness pinned to the main squash-merge commit of mcp-eval-harness #6. Keep this SHA
+      # in step with the package.json devDependency pin.
+      - uses: SarutobiSasuke8/mcp-eval-harness@c33df1c081ec871a7fbc294af87052bfeabb6b24
         with:
           suite: eval/mcp.suite.yaml
           node-version: ""
