@@ -8,8 +8,12 @@ site boundaries.
 
 - Bind Node to `127.0.0.1`; terminate TLS at a reverse proxy.
 - Keep `HTTP_ALLOW_REFRESH=false` for anonymous endpoints.
-- Set a bounded `STARTUP_REFRESH_LIMIT` if public search should be ready after
-  startup without exposing the refresh tool.
+- Keep the bounded automatic refresh enabled so search stays current without
+  exposing the refresh tool. Defaults warm 50 pages on startup and refresh
+  windows of 50 pages every 5 minutes.
+- Keep the application request limit enabled. Configure `HTTP_TRUST_PROXY` with
+  only the actual reverse-proxy IP, CIDR or alias so `X-Forwarded-For` is used
+  only from a trusted hop. For nginx on the same host, `loopback` is suitable.
 - Apply a proxy request-body cap, request rate limit and timeouts.
 - Do not log page bodies, raw search strings, authorization headers or cookies.
 - Keep each `SITE_ALLOWED_HOSTS` list minimal and explicit.
@@ -26,9 +30,19 @@ CACHE_MAX_ENTRIES=500
 FETCH_MIN_INTERVAL_MS=1000
 HTTP_ALLOW_REFRESH=false
 STARTUP_REFRESH_LIMIT=50
+HTTP_REFRESH_INTERVAL_SECONDS=300
+HTTP_RATE_LIMIT_WINDOW_MS=60000
+HTTP_RATE_LIMIT_MAX_REQUESTS=60
+HTTP_TRUST_PROXY=loopback
 HOST=127.0.0.1
 PORT=3215
 ```
+
+The Node listener keeps HTTP sockets for 65 seconds and sets the header timeout
+to 67 seconds, leaving clients time to reuse a connection between MCP
+initialization and their first tool call. The nginx example allows 90 seconds
+for MCP reads and writes. Match these values to the actual proxy chain; these
+repository changes do not modify a live nginx configuration.
 
 The repository includes a hardened systemd template and an nginx location
 example under `deploy/`. Review user names, paths, ports and proxy topology for

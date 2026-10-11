@@ -55,6 +55,7 @@ export class HostNotAllowedError extends Error {
 export class ContentService {
   /** robots.txt rules, cached per origin. */
   private readonly robotsByOrigin = new Map<string, RobotsResult>();
+  private completedRefreshAt: string | null = null;
 
   public constructor(
     private readonly config: AppConfig,
@@ -248,7 +249,8 @@ export class ContentService {
     return { sitemapUrl: this.config.sitemapUrl, available: result.entries.length > 0, ...result };
   }
 
-  public async listPages(limit: number): Promise<{ source: PageListing["source"]; pages: PageListing[]; warnings: string[] }> {
+  public async listPages(limit: number, offset = 0): Promise<{ source: PageListing["source"]; pages: PageListing[]; warnings: string[] }> {
+    const start = Math.max(0, Math.floor(offset));
     const warnings: string[] = [];
     // 1. Configured sitemap.
     const sitemap = await this.loadSitemapEntries(this.config.sitemapUrl);
@@ -256,7 +258,7 @@ export class ContentService {
     if (sitemap.entries.length > 0) {
       return {
         source: "sitemap",
-        pages: sitemap.entries.slice(0, limit).map((entry) => toListing(entry, "sitemap")),
+        pages: sitemap.entries.slice(start, start + limit).map((entry) => toListing(entry, "sitemap")),
         warnings,
       };
     }
@@ -270,7 +272,7 @@ export class ContentService {
       if (result.entries.length > 0) {
         return {
           source: "robots",
-          pages: result.entries.slice(0, limit).map((entry) => toListing(entry, "robots")),
+          pages: result.entries.slice(start, start + limit).map((entry) => toListing(entry, "robots")),
           warnings,
         };
       }
@@ -280,7 +282,7 @@ export class ContentService {
     const configured = this.config.configuredPages.length > 0 ? this.config.configuredPages : [this.config.baseUrl];
     return {
       source: "configured",
-      pages: configured.slice(0, limit).map((url) => ({ url, source: "configured" as const })),
+      pages: configured.slice(start, start + limit).map((url) => ({ url, source: "configured" as const })),
       warnings,
     };
   }
@@ -289,8 +291,8 @@ export class ContentService {
    * Warm the cache by walking the site's discoverable pages, so `search` has
    * something to search. Robots-disallowed and off-host URLs are skipped.
    */
-  public async refresh(limit: number, force = false): Promise<RefreshResult> {
-    const { source, pages, warnings } = await this.listPages(limit);
+  public async refresh(limit: number, force = false, offset = 0): Promise<RefreshResult> {
+    const { source, pages, warnings } = await this.listPages(limit, offset);
     const result: RefreshResult = {
       source,
       requested: pages.length,
@@ -325,7 +327,13 @@ export class ContentService {
       }
     }
 
+    this.completedRefreshAt = new Date().toISOString();
     return result;
+  }
+
+  /** Completion time of the latest cache refresh pass, or null before the first pass. */
+  public get lastRefreshAt(): string | null {
+    return this.completedRefreshAt;
   }
 
   public async search(query: string, limit: number): Promise<SearchHit[]> {
@@ -369,6 +377,7 @@ export class ContentService {
       cacheMaxEntries: this.config.cacheMaxEntries,
       cacheEntries: stats.entries,
       cacheBytes: stats.bytes,
+      lastRefreshAt: this.completedRefreshAt,
     };
     if (stats.lastFetchAt) status.lastFetchAt = stats.lastFetchAt;
     return status;

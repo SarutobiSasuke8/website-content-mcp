@@ -13,6 +13,7 @@ server {
         proxy_pass http://127.0.0.1:3215;
         # The MCP SDK validates the upstream Host against its loopback listener.
         proxy_set_header Host 127.0.0.1:3215;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 5s;
@@ -25,11 +26,12 @@ server {
         proxy_http_version 1.1;
         # The MCP SDK validates the upstream Host against its loopback listener.
         proxy_set_header Host 127.0.0.1:3215;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_connect_timeout 5s;
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
+        proxy_read_timeout 90s;
+        proxy_send_timeout 90s;
     }
 }
