@@ -143,6 +143,7 @@ void test("refresh warms the cache from the sitemap and skips disallowed pages",
     assert.equal(result.requested, 2);
     assert.equal(result.fetched, 1, "only the allowed page is fetched");
     assert.equal(result.skipped, 1, "the robots-disallowed page is skipped");
+    assert.ok(service.lastRefreshAt, "completed refresh time is available to HTTP search and health");
     assert.equal(fetcher.calls.some((call) => call.url.includes("/private/")), false);
 
     // Search now works without the caller fetching pages one at a time.
@@ -150,6 +151,15 @@ void test("refresh warms the cache from the sitemap and skips disallowed pages",
     assert.equal(hits.length, 1);
     assert.equal(hits[0]?.url, "https://site.test/a");
     assert.ok(hits[0]?.score >= 1);
+  });
+});
+
+void test("listPages supports bounded windows for scheduled refresh passes", async () => {
+  await withTempDir(async (dir) => {
+    const { service } = makeService(new FakeFetcher(routes()), dir);
+    const window = await service.listPages(1, 1);
+    assert.equal(window.pages.length, 1);
+    assert.equal(window.pages[0]?.url, "https://site.test/private/secret");
   });
 });
 
@@ -190,18 +200,23 @@ void test("page results label untrusted source content and extraction quality", 
   });
 });
 
-void test("a stale entry is revalidated conditionally and reused on 304", async () => {
+void test("a page older than the TTL is revalidated on read and reused on 304", async () => {
   await withTempDir(async (dir) => {
     const fetcher = new FakeFetcher(routes());
-    const { service } = makeService(fetcher, dir, { CACHE_TTL_SECONDS: "0" });
+    const { service, cache } = makeService(fetcher, dir);
 
     await service.getPage("/a");
+    const cached = await cache.read("https://site.test/a");
+    assert.ok(cached);
+    await cache.set({ ...cached, fetchedAt: new Date(Date.now() - 2 * 60 * 60 * 1_000).toISOString() });
+
     const second = await service.getPage("/a");
 
     const conditionalCall = fetcher.calls.filter((call) => call.url === "https://site.test/a").at(-1);
     assert.equal(conditionalCall?.conditional.etag, 'W/"a1"', "the stored ETag is replayed");
     assert.equal(second.fromCache, true, "a 304 reuses the cached body");
     assert.match(second.markdown, /widgets/iu);
+    assert.ok(Date.parse(second.fetchedAt) > Date.now() - 60_000, "the TTL clock is reset by revalidation");
   });
 });
 

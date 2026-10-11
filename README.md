@@ -112,14 +112,16 @@ provide them.
 | `content_list_pages` | List discoverable pages (sitemap → robots.txt sitemaps → configured list). Returns URL, title, last-modified when known. |
 | `content_refresh` | Walk the discoverable pages and warm the cache so `content_search` has something to search. Skips robots-disallowed pages. Available on stdio; opt-in on HTTP. |
 | `content_get_page` | Fetch a page URL, strip to clean markdown, return content + metadata, content hash and any schema.org Product/Offer facts. Supports `max_length`; forced `refresh` is disabled on public HTTP by default. |
-| `content_search` | Keyword search over already-fetched/cached pages. Returns URL, score, snippet. |
+| `content_search` | Keyword search over cached pages. Returns URL, score, snippet and the last completed refresh time. |
 | `content_get_sitemap` | Return the raw sitemap structure (URLs + last-modified/priority/change-frequency when present). |
-| `content_health` | Server status: configured site, allowed hosts, cache directory, cache size, last fetch time. |
+| `content_health` | Server status: configured site, allowed hosts, cache directory, cache size, last fetch time and last completed refresh time. |
 
-The cache starts empty, so `content_search` finds nothing until pages have been
-fetched. Run `content_refresh` once after starting the server (it is rate-limited
-to ~1 request/second, so a 50-page pass takes about a minute), or fetch pages
-individually with `content_get_page`.
+On HTTP, up to 50 discoverable pages are warmed after startup and refreshed every
+5 minutes by default. Each pass advances through the page list, so larger sites
+are covered over successive passes. `content_search` reports `last_refresh_at`;
+`content_health` reports `lastRefreshAt`. Set `STARTUP_REFRESH_LIMIT=0` to disable
+automatic HTTP refreshes. Stdio users can run `content_refresh` (about 1 request
+per second) or fetch pages individually with `content_get_page`.
 
 ## Requirements
 
@@ -172,7 +174,11 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `HOST` | | `127.0.0.1` | HTTP bind host. |
 | `PORT` | | `3215` | HTTP bind port. |
 | `HTTP_ALLOW_REFRESH` | | `false` | Expose `content_refresh` and permit forced origin revalidation over HTTP. Enable only behind an authenticated or restricted reverse proxy. Stdio always permits refresh. |
-| `STARTUP_REFRESH_LIMIT` | | `0` | Warm up to this many discoverable pages in the background after HTTP starts. Useful when the public refresh tool stays disabled. |
+| `HTTP_RATE_LIMIT_WINDOW_MS` | | `60000` | Per-IP request window for `/mcp`. |
+| `HTTP_RATE_LIMIT_MAX_REQUESTS` | | `60` | Maximum `/mcp` requests per IP in each window; excess requests receive `429` and `Retry-After`. |
+| `HTTP_TRUST_PROXY` | | empty | Comma-separated trusted proxy IPs, CIDRs or aliases such as `loopback`. `X-Forwarded-For` is ignored unless a matching proxy is configured. |
+| `STARTUP_REFRESH_LIMIT` | | `50` | Pages refreshed on startup and each scheduled HTTP pass. Set to `0` to disable automatic refresh. |
+| `HTTP_REFRESH_INTERVAL_SECONDS` | | `300` | Seconds between scheduled HTTP passes. Set to `0` for startup-only warming. |
 
 ## Run
 
@@ -187,10 +193,16 @@ The MCP endpoint is `POST /mcp`; a plain health probe is available at `GET /heal
 
 Streamable HTTP is deliberately public read-only by default. It omits
 `content_refresh`, refuses `content_get_page(refresh: true)`, and redacts the
-local cache path from MCP health output. Normal uncached reads can still reach
-the configured public site and should be rate-limited at the reverse proxy.
-Set `STARTUP_REFRESH_LIMIT` to populate search without exposing a public
-cache-warming tool.
+local cache path from MCP health output. Expired pages are revalidated on
+`content_get_page` reads. The bounded background refresh keeps search current
+without exposing a public cache-warming tool. `content_search` describes the
+actual HTTP refresh mode and returns the last completed refresh time.
+
+Inbound `/mcp` requests are limited per client IP. The server uses the socket IP
+unless `HTTP_TRUST_PROXY` explicitly lists the reverse proxy, so untrusted
+`X-Forwarded-For` values cannot bypass the quota. Behind local nginx, set
+`HTTP_TRUST_PROXY=loopback`; use the proxy's specific address or CIDR for other
+topologies.
 
 For a loopback Node process behind nginx/systemd, see
 [`docs/production-deployment.md`](./docs/production-deployment.md).

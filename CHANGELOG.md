@@ -3,6 +3,27 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Automatically warm and periodically refresh bounded page windows for HTTP
+  search, with the last completed refresh time in health and search results.
+- Add a configurable per-IP `/mcp` request limit with `429` and `Retry-After`.
+  Forwarded client IPs are used only when the proxy is explicitly trusted.
+
+### Fixed
+
+- Keep HTTP sockets open long enough for clients to reuse them between MCP
+  initialization and their first tool request; align the nginx example timeout.
+- Describe `content_refresh` only in modes where that tool is exposed.
+- Revalidate expired page cache entries on reads and cover the TTL boundary.
+
+### Documentation
+
+- Document refresh cadence, per-IP limits, trusted proxy configuration and the
+  recommended production timeouts.
+
 ## [0.4.0] — 2026-08-28
 
 ### Security
