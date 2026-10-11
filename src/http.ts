@@ -10,22 +10,22 @@ import { HTTP_HEADERS_TIMEOUT_MS, HTTP_KEEP_ALIVE_TIMEOUT_MS, HTTP_REQUEST_TIMEO
 import { createRuntime } from "./runtime.js";
 import { createContentMcpServer } from "./server.js";
 
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ErrorRequestHandler } from "express";
 
 const config = loadConfig();
 const { service } = createRuntime(config);
 
-const mcpServer = createContentMcpServer(service, {
+const serverOptions = {
   allowRefresh: config.httpAllowRefresh,
   exposeCachePath: false,
   backgroundRefreshLimit: config.startupRefreshLimit,
   backgroundRefreshIntervalSeconds: config.httpRefreshIntervalSeconds,
-});
-const transport = new NodeStreamableHTTPServerTransport({
-  sessionIdGenerator: undefined,
-  enableJsonResponse: true,
-});
-await mcpServer.connect(transport);
+};
+// Stateless Streamable HTTP: the SDK does not reuse a stateless transport across
+// requests, so each request gets its own server and transport, closed when the
+// response closes. The content service and its cache are shared.
+const openServers = new Set<McpServer>();
 
 const app = createMcpExpressApp({ host: config.host, jsonLimit: "1mb" });
 app.set("trust proxy", config.httpTrustedProxies.length > 0 ? config.httpTrustedProxies : false);
@@ -40,6 +40,17 @@ app.all("/mcp", createIpRateLimitMiddleware({
   windowMs: config.httpRateLimitWindowMs,
   maxRequests: config.httpRateLimitMaxRequests,
 }), async (request, response) => {
+  const mcpServer = createContentMcpServer(service, serverOptions);
+  const transport = new NodeStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  openServers.add(mcpServer);
+  response.on("close", () => {
+    openServers.delete(mcpServer);
+    void mcpServer.close();
+  });
+  await mcpServer.connect(transport);
   await transport.handleRequest(request, response, request.body);
 });
 
@@ -72,7 +83,8 @@ httpServer.headersTimeout = HTTP_HEADERS_TIMEOUT_MS;
 async function shutdown(): Promise<void> {
   refreshScheduler.stop();
   httpServer.close();
-  await mcpServer.close();
+  await Promise.allSettled([...openServers].map((server) => server.close()));
+  openServers.clear();
 }
 
 process.on("SIGINT", () => void shutdown());
