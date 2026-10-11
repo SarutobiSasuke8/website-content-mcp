@@ -79,11 +79,14 @@ contracts:
     assert:
       golden: fixtures/content_refresh.golden.json
 
+  # last_refresh_at is the time the refresh above completed, so it is left out.
   - name: search_golden
     tool: content_search
     input: { query: "sourdough", limit: 5 }
     assert:
-      golden: fixtures/content_search.golden.json
+      golden:
+        path: fixtures/content_search.golden.json
+        ignore_paths: [last_refresh_at]
 
   # Deny and fail-closed paths.
   - name: deny_off_host_url
