@@ -1,0 +1,26 @@
+{
+  "page": {
+    "contentHash": "9421959dc67465207fe9397243230c8cbe6ba14e419d15751d88ccbac62a4d4a",
+    "contentLength": 257,
+    "extractionMethod": "readability",
+    "extractionQuality": "full",
+    "fromCache": false,
+    "markdown": "A sourdough loaf costs five euro fifty. A rye loaf costs six euro. Prices on this synthetic page never change, so the contract suite can compare them.\n\nWholesale orders of more than ten loaves get a small discount, agreed by email with the synthetic bakers.",
+    "products": [
+      {
+        "name": "Sourdough loaf",
+        "offers": [
+          {
+            "availability": "https://schema.org/InStock",
+            "price": "5.50",
+            "priceCurrency": "EUR"
+          }
+        ]
+      }
+    ],
+    "sourceTrust": "untrusted-web-content",
+    "title": "Pricing | Fixture Bakery",
+    "truncated": false,
+    "url": "http://127.0.0.1:3298/pricing.html"
+  }
+}

@@ -1,0 +1,2 @@
+# Serve the fixture site byte-for-byte on every OS, so content hashes in goldens match.
+fixtures/site/** text eol=lf

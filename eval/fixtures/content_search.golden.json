@@ -1,0 +1,23 @@
+{
+  "query": "sourdough",
+  "results": [
+    {
+      "score": 2,
+      "snippet": "Fixture Bakery Fixture Bakery bakes sourdough bread every morning in a synthetic town. This page exists only so the contract…",
+      "title": "Fixture Bakery",
+      "url": "http://127.0.0.1:3298/"
+    },
+    {
+      "score": 1,
+      "snippet": "Pricing | Fixture Bakery A sourdough loaf costs five euro fifty. A rye loaf costs six euro. Prices on this synthetic…",
+      "title": "Pricing | Fixture Bakery",
+      "url": "http://127.0.0.1:3298/pricing.html"
+    },
+    {
+      "score": 1,
+      "snippet": "…ic bakers who wanted a test page with real paragraphs. They bake rye, spelt and sourdough loaves. The bakery uses flour milled nearby and keeps its starter culture fed…",
+      "title": "About Fixture Bakery",
+      "url": "http://127.0.0.1:3298/about.html"
+    }
+  ]
+}
