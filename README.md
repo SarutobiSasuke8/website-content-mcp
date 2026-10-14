@@ -61,6 +61,15 @@ For a recurring change workflow, persist those deterministic fields outside the
 MCP server, re-read the same pages later, and only ask AI to classify or
 summarize a verified difference.
 
+## Offline regression tests
+
+Run `npm ci` followed by `npm run check` for typecheck, lint and tests. The
+saved synthetic HTML under `tests/fixtures/` covers article formatting, relative
+links, code blocks, Unicode spacing, client-rendered shells and malformed
+structured data. A fake fetcher also checks response truncation, content hashes
+and cache reuse. No live website or API key is needed. The existing live-site
+integration test remains opt-in and is skipped by default.
+
 ## Features
 
 - **Clean extraction** — HTML → markdown via [Mozilla Readability](https://github.com/mozilla/readability) + [Turndown](https://github.com/mixmark-io/turndown) (real DOM parsing, never regex). Extraction runs once per page and is cached.
