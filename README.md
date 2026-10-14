@@ -2,7 +2,7 @@
 
 Give an AI agent a reliable, site-scoped view of a website: clean content now,
 and deterministic evidence when it changes. It is a free, self-hosted
-[MCP](https://modelcontextprotocol.io) server—not a general-purpose scraper—so
+[MCP](https://modelcontextprotocol.io) server (not a general-purpose scraper), so
 the agent only reads the website you configure, respects `robots.txt`, and can
 show the hash and HTTP validators behind a result.
 
@@ -16,7 +16,7 @@ show the hash and HTTP validators behind a result.
   rather than from a stale upload.
 - **Build a research foundation.** Turn a site's sitemap and page content into
   a bounded, attributable input for briefs, audits, catalog analysis or change
-  review—without granting the agent arbitrary web-fetch access.
+  review without granting the agent arbitrary web-fetch access.
 
 Unlike Firecrawl and generic scraping APIs, this project is site-scoped,
 robots-compliant, deterministic about change evidence, self-hosted and free.
@@ -50,16 +50,16 @@ public HTTP transport is deliberately read-only: populate search with
 
 ## A real agent flow
 
-> **Prompt:** “Summarize what is new on astraeus.ie.”
+> **Prompt:** “Summarise what is new on astraeus.ie.”
 >
 > 1. The agent calls `content_list_pages` to discover the site structure.
 > 2. It calls `content_get_page` for the relevant current pages.
-> 3. It summarizes the returned Markdown and cites the source URLs, retaining
+> 3. It summarises the returned Markdown and cites the source URLs, retaining
 >    `contentHash`, `ETag` and `fetchedAt` for the next comparison.
 
 For a recurring change workflow, persist those deterministic fields outside the
 MCP server, re-read the same pages later, and only ask AI to classify or
-summarize a verified difference.
+summarise a verified difference.
 
 ## Offline regression tests
 
@@ -72,16 +72,16 @@ integration test remains opt-in and is skipped by default.
 
 ## Features
 
-- **Clean extraction** — HTML → markdown via [Mozilla Readability](https://github.com/mozilla/readability) + [Turndown](https://github.com/mixmark-io/turndown) (real DOM parsing, never regex). Extraction runs once per page and is cached.
-- **Deterministic change evidence** — each page includes a SHA-256 of the complete normalized markdown plus upstream `ETag` / `Last-Modified` validators when available.
-- **Extraction-quality evidence** — results state whether content came from Readability, the cleaned body, plain text or metadata-only fallback, with actionable warnings for client-rendered shells.
-- **Commerce-aware metadata** — bounded schema.org `Product` / `Offer` JSON-LD is returned as structured product, SKU, GTIN, brand, price, currency and availability facts.
-- **Discovery** — page listing from `sitemap.xml`, sitemaps advertised in `robots.txt`, or a configured page list.
-- **Disk cache** — fetched pages cached with a configurable TTL and a size bound; reads prefer cache, then a conditional revalidation, then stale-on-error.
-- **Polite by default** — respects `robots.txt` disallow rules, rate-limits to ~1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
-- **Scoped to one site** — fetches are refused for any host outside the configured site.
-- **Public-network safe by default** — allowed hostnames are resolved before every request and redirect hop; private, loopback, link-local and special-use destinations require an explicit operator opt-in.
-- **Two transports** — Streamable HTTP and stdio.
+- **Clean extraction**: HTML -> markdown via [Mozilla Readability](https://github.com/mozilla/readability) + [Turndown](https://github.com/mixmark-io/turndown) (real DOM parsing, never regex). Extraction runs once per page and is cached.
+- **Deterministic change evidence**: each page includes a SHA-256 of the complete normalised markdown plus upstream `ETag` / `Last-Modified` validators when available.
+- **Extraction-quality evidence**: results state whether content came from Readability, the cleaned body, plain text or metadata-only fallback, with actionable warnings for client-rendered shells.
+- **Commerce-aware metadata**: bounded schema.org `Product` / `Offer` JSON-LD is returned as structured product, SKU, GTIN, brand, price, currency and availability facts.
+- **Discovery**: page listing from `sitemap.xml`, sitemaps advertised in `robots.txt`, or a configured page list.
+- **Disk cache**: fetched pages cached with a configurable TTL and a size bound; reads prefer cache, then a conditional revalidation, then stale-on-error.
+- **Polite by default**: respects `robots.txt` disallow rules, rate-limits to ~1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
+- **Scoped to one site**: fetches are refused for any host outside the configured site.
+- **Public-network safe by default**: allowed hostnames are resolved before every request and redirect hop; private, loopback, link-local and special-use destinations require an explicit operator opt-in.
+- **Two transports**: Streamable HTTP and stdio.
 
 ## What a page result looks like
 
@@ -167,10 +167,10 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SITE_BASE_URL` | ✅ | — | The site whose content is exposed. |
+| `SITE_BASE_URL` | ✅ | - | The site whose content is exposed. |
 | `SITE_SITEMAP_URL` | | `<base>/sitemap.xml` | Sitemap location. |
-| `SITE_PAGES` | | — | Comma-separated fallback page list (absolute or base-relative). |
-| `SITE_ALLOWED_HOSTS` | | — | Extra hosts that may be fetched. The base URL's host is always allowed. |
+| `SITE_PAGES` | | - | Comma-separated fallback page list (absolute or base-relative). |
+| `SITE_ALLOWED_HOSTS` | | - | Extra hosts that may be fetched. The base URL's host is always allowed. |
 | `CACHE_DIR` | | `.cache` | Disk cache directory. |
 | `CACHE_TTL_SECONDS` | | `3600` | Cache TTL (0 disables caching). |
 | `CACHE_MAX_ENTRIES` | | `500` | Cache size bound, evicting oldest-first (0 = unbounded). |
@@ -194,8 +194,16 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 **Streamable HTTP** (default transport):
 
 ```bash
+# Using a .env file (recommended):
+cp .env.example .env
+npm start
+
+# Or passing environment variables inline:
+# POSIX / Bash:
 SITE_BASE_URL=https://example.com npm start
-# → website-content-mcp listening on http://127.0.0.1:3215/mcp (site: https://example.com/)
+# PowerShell:
+$env:SITE_BASE_URL="https://example.com"; npm start
+# -> website-content-mcp listening on http://127.0.0.1:3215/mcp (site: https://example.com/)
 ```
 
 The MCP endpoint is `POST /mcp`; a plain health probe is available at `GET /healthz`.
@@ -219,7 +227,10 @@ For a loopback Node process behind nginx/systemd, see
 **stdio** (for local MCP clients):
 
 ```bash
+# POSIX / Bash:
 SITE_BASE_URL=https://example.com npm run start:stdio
+# PowerShell:
+$env:SITE_BASE_URL="https://example.com"; npm run start:stdio
 ```
 
 Example MCP client entry from a local source checkout (stdio):
@@ -235,6 +246,42 @@ Example MCP client entry from a local source checkout (stdio):
   }
 }
 ```
+
+## Troubleshooting
+
+### Startup refresh fails or logs DNS errors (`ENOTFOUND`)
+
+When starting the HTTP transport with `STARTUP_REFRESH_LIMIT` enabled (default `50`), the server performs an initial cache-warming pass from the site sitemap. If `SITE_BASE_URL` cannot be resolved (for example when offline or targeting an unresolvable hostname), a warning is logged:
+
+```text
+Startup cache refresh failed: getaddrinfo ENOTFOUND ...
+```
+
+The server continues running and responds to HTTP and MCP requests. To disable automatic startup warming, set `STARTUP_REFRESH_LIMIT=0` in `.env`.
+
+### Missing `SITE_BASE_URL` error on startup
+
+`SITE_BASE_URL` is the only mandatory configuration setting. If omitted, startup fails with a validation error:
+
+```text
+[ { "code": "invalid_type", "expected": "string", "received": "undefined", "path": [ "SITE_BASE_URL" ], "message": "Required" } ]
+```
+
+Create a `.env` file from `.env.example` and configure `SITE_BASE_URL` before launching.
+
+### Keyword search returns empty results
+
+`content_search` queries only pages present in the local disk cache. On a fresh server instance, the cache begins empty:
+- On stdio: run `content_refresh` to warm the cache, or fetch individual target pages using `content_get_page`.
+- On HTTP: allow startup cache warming to complete (`STARTUP_REFRESH_LIMIT`), or fetch pages individually with `content_get_page`.
+
+### Private IP address or loopback destination refused
+
+Outbound network fetches to private, loopback (`127.0.0.1`, `localhost`), link-local, or cloud metadata IP ranges are blocked by default to prevent Server-Side Request Forgery (SSRF). When intentionally pointing the server at an internal service or local test environment, set `FETCH_ALLOW_PRIVATE_NETWORK=true` in `.env`.
+
+### Pages refused by robots.txt
+
+If `content_get_page` or `content_refresh` reports `RobotsDisallowedError`, the requested URL is restricted by the remote site's `robots.txt`. The server strictly enforces origin robots policies and does not bypass crawl restrictions.
 
 ## Development
 
@@ -287,7 +334,7 @@ npx -y -p @sarutobi-sasuke/website-content-mcp website-content-dogfood
 ## Security & etiquette
 
 - Binds to `127.0.0.1` by default.
-- No authentication and no API keys — intended for **public** content only.
+- No authentication and no API keys; intended for **public** content only.
 - Scoped to the configured site: a URL on any other host is refused, so the
   server cannot be used as a general-purpose fetcher. Widen deliberately with
   `SITE_ALLOWED_HOSTS`.
@@ -310,9 +357,9 @@ npx -y -p @sarutobi-sasuke/website-content-mcp website-content-dogfood
 This project is the content-access foundation for monitoring workflows; it is
 not itself a scheduler or alerting service. Competitor monitoring additionally
 needs durable snapshots, deterministic diffs, a scheduler, notifications and
-an evidence-retention policy. AI can classify and summarize verified changes,
+an evidence-retention policy. AI can classify and summarise verified changes,
 but should not replace the underlying hashes, fields and source records.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT License](./LICENSE)
