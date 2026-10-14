@@ -88,5 +88,9 @@ void test("service formatting hashes full fixture content before response trunca
     assert.equal(limited.fromCache, true);
     assert.equal(limited.sourceTrust, "untrusted-web-content");
     assert.equal(calls.filter(url => !url.endsWith("robots.txt")).length, 1);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally {
+    assert.equal(path.dirname(path.resolve(dir)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(dir).startsWith("wcm-saved-"));
+    await rm(dir, { recursive: true, force: true });
+  }
 });
