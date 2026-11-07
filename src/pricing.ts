@@ -69,7 +69,7 @@ const PROMO = /\d{1,3}\s?%\s*(?:off|discount)|\bsave\s+(?:up to\s+)?\d{1,3}\s?%|
 /** Real headings, plus the styled elements that sites use as plan names. */
 const HEADING = "h2, h3, h4, h5, [role='heading'], .h2, .h3, .h4, .h5, [class*='plan-name' i], [class*='tier-name' i], [class*='plan-title' i], [class*='package-name' i]";
 const SKIPPED_HEADING = /^(?:pricing|plans?|compare|frequently asked questions|faq|questions?)\b/iu;
-const FREE_OR_CUSTOM = /^(?:free|custom|enterprise|contact)\b/iu;
+const FREE_OR_CUSTOM = /^(?:free|custom|enterprise)\b/iu;
 
 const BLOCK_TAGS = new Set(["DIV", "P", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "SECTION", "BR", "TR", "TD", "TH", "UL", "OL", "ARTICLE"]);
 
@@ -255,7 +255,8 @@ function promosOf(doc: Document): string[] {
   const found: string[] = [];
   for (const element of Array.from(doc.body.querySelectorAll("p, span, div, a, strong, li, h1, h2, h3, h4, small, b"))) {
     const text = norm(element.textContent);
-    if (!text || text.length > 160 || !PROMO.test(text)) continue;
+    // A question is an FAQ entry, not a banner.
+    if (!text || text.length > 160 || text.endsWith("?") || !PROMO.test(text)) continue;
     const deeper = Array.from(element.children).some((child) => PROMO.test(norm(child.textContent)));
     if (deeper) continue;
     const clean = clip(text, 160);

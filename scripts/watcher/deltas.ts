@@ -200,7 +200,9 @@ export function diffFacts(before: PageFacts | undefined, after: PageFacts | unde
     if (!newOffers.has(name)) changes.push(change("price", "high", `Structured price for "${name}" (${listed(values)}) is no longer declared.`, { type: "price_changed" }));
   }
 
-  changes.push(...ctaChanges(before, after));
+  // A button named after a renamed plan ("Choose Growth") is explained by the rename, so it is not reported twice.
+  const renamed = changes.filter((entry) => entry.type === "plan_renamed").flatMap((entry) => [entry.old, entry.new]).filter((name): name is string => Boolean(name)).map((name) => name.toLowerCase());
+  changes.push(...ctaChanges(before, after).filter((entry) => !renamed.some((name) => entry.description.toLowerCase().includes(name))));
   changes.push(...positioningChanges(before, after));
 
   if (before.title !== after.title) changes.push(change("title", "low", `Title changed from "${before.title ?? "none"}" to "${after.title ?? "none"}".`));

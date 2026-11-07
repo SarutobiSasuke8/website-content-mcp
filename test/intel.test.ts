@@ -80,6 +80,23 @@ void test("a rename is reported as a rename and the price history continues unde
   });
 });
 
+void test("a rename explains the buttons named after the plan, and later runs do not record a false removal", async () => {
+  await withSite(async ({ site, out }) => {
+    await runWatcher(base(site, out));
+    site.set(PRICING, plans("€49", "Growth"));
+    const run = await runWatcher(base(site, out, list(), new Date("2026-11-21T08:00:00Z")));
+    const types = run.results[0]?.factChanges.map((entry) => entry.type) ?? [];
+    assert.ok(types.includes("plan_renamed"));
+    assert.ok(!types.some((type) => type?.startsWith("cta_")), "Choose Pro and Choose Growth are not reported separately");
+
+    // A later price change on another plan must not close the renamed plan's series.
+    site.set(PRICING, plans("€59", "Growth"));
+    await runWatcher(base(site, out, list(), new Date("2026-11-28T08:00:00Z")));
+    const history = await new PriceHistoryStore(path.join(out, "snapshots", "price-history")).read(PRICING);
+    assert.ok(!history.points.some((point) => point.plan === "Pro" && point.amount === null));
+  });
+});
+
 void test("ignore rules remove noise before comparing", async () => {
   await withSite(async ({ site, out }) => {
     const watchlist = list({ ignore: { selectors: [".cookie-banner"], text: ["^Updated \\d+ [A-Za-z]+$"] } });

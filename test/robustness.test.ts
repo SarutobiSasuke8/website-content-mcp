@@ -175,12 +175,14 @@ void test("load() keeps a good cache entry when the origin answers 5xx", async (
 void test("hostile page text cannot become task fields, tags, comments or mentions", () => {
   const hostile = "Pay 📅 2020-01-01 ⏫ ⏳ 2020-02-02 🛫 2020-03-03 🔁 every day %% hidden %% ＠x @y `code` $math$ ^block #next [[Link]] [due:: 2020-01-01] ✅ 2020-01-01";
   const text = taskText(hostile);
-  for (const forbidden of ["📅", "⏫", "⏳", "🛫", "🔁", "✅", "%", "＠", "@", "`", "$", "^", "#", "[", "]", "::"]) {
+  for (const forbidden of ["📅", "⏫", "⏳", "🛫", "🔁", "✅", "%%", "＠", "@", "`", "$", "^", "#", "[", "]", "::"]) {
     assert.ok(!text.includes(forbidden), `taskText must remove ${forbidden}: ${text}`);
   }
   assert.ok(taskText("x".repeat(500)).length <= 200);
   assert.ok(taskText("y".repeat(500), 60).length <= 60);
   assert.equal(taskText("📅 2020-01-01 ⏫ %% ＠x"), "2020-01-01 x");
+  assert.equal(taskText("went up 20.4%"), "went up 20.4%", "a single percent sign is kept");
+  assert.ok(!taskText("a %#% b").includes("%%"), "removing a character cannot join two percent signs into a comment");
 
   const shown = inline("Offer %% comment %% #next $5$ 100% sure");
   assert.ok(!shown.includes("%%"));

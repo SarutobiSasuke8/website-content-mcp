@@ -40,8 +40,10 @@ export function taskText(text: string, max = 200): string {
     .replace(/‍|︎|️/gu, "")
     .replace(/\p{C}/gu, " ")
     .replace(/[[\]]/gu, (bracket) => (bracket === "[" ? "(" : ")"))
-    .replace(/[#%`$^@＠]/gu, "")
+    .replace(/[#`$^@＠]/gu, "")
     .replace(/::/gu, ":")
+    // Two percent signs open an Obsidian comment; a single one (as in 20.4%) is harmless.
+    .replace(/%{2,}/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;

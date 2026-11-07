@@ -30,6 +30,25 @@ This section combines the previously staged 0.4.0 notes (below, under "Earlier
 - Health output now lists `siteAllowlist`; list, sitemap and refresh results
   name the `site` they describe.
 
+### Added in the second round
+
+- `content_price_history` reads a stored, bounded series of plan prices per page. The watcher writes it and exports it as CSV (`history` command).
+- Plan-level price model in `content_extract_facts` (`pricingTable`): plan name, price or range, currency, billing period, per-unit basis, free and trial flags, features, further rates and promotion banners, plus a per-month equivalent. Plans are matched across runs so a rename is a rename.
+- Watchlist options: `watch` (pricing, blog, changelog, careers, integrations, security), `focus`, `ignore`, `confirm-runs`, `price-threshold-pct` and `render`.
+- Severity (high, medium, low) on every change. Only high and medium create inbox tasks.
+- Typed competitor events: `new_post`, `new_release`, `new_role`, `role_closed`, `hiring_surge`, `integration_added`, `integration_removed`, `certification_added`, `certification_removed`, `positioning_changed`.
+- `compare` (a living competitor comparison note) and `digest` (a deterministic weekly summary) commands, backed by `events.jsonl` and `runs.jsonl` logs.
+- Optional page rendering through the optional peer dependency `playwright-core` (off by default, empty profile, same-site requests only, 30 second limit).
+
+### Fixed in the second round
+
+- A single 5xx, 429, timeout or access refusal is no longer treated as page removal. Such a page is unavailable for that run and its baseline is untouched. Only HTTP 404 or 410 seen twice in one run counts as removal. A 5xx or 429 also no longer overwrites a good cache entry.
+- Page text can no longer inject Tasks-plugin fields, tags, comments, maths or mentions into inbox tasks or notes, and task lines are length capped.
+- A `site` argument written as `http://...` is fetched over https, plain http is refused for every site except the base site, and redirects from https to http are refused.
+- Sitemaps and nested sitemaps only contribute pages of the site they were requested for.
+- `content_site_health` has an overall time limit and a per-fetch size cap.
+- The same change is written once per run, and a price that returns to an earlier value creates a new task unless an unticked one for it exists.
+
 ### Changed
 
 - Request pacing is now per host instead of one global interval. A request to

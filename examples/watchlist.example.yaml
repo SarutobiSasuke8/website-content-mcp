@@ -24,3 +24,33 @@ items:
     # Optional hints narrow what is compared. Use one of the two.
     section: Plans
     # selector: "main .plans"
+
+  - url: https://competitor.example/plans
+    label: Competitor plans with noise control
+    why-it-matters: Plan prices drive our own pricing. Ignore the banner and the rotating quotes, and report a change only after it has been seen twice.
+    kind: competitor
+    watch: pricing
+    ignore:
+      selectors: [".cookie-banner", ".testimonials"]
+      text: ["^Updated \\d+ \\w+$"]
+    confirm-runs: 2
+    price-threshold-pct: 2
+
+  - url: https://competitor.example/changelog
+    label: Competitor changelog
+    why-it-matters: Shows what they ship and how fast.
+    kind: competitor
+    watch: changelog
+
+  - url: https://competitor.example/careers
+    label: Competitor careers
+    why-it-matters: New roles by department are a hiring and strategy signal.
+    kind: competitor
+    watch: careers
+
+  - url: https://app.example/
+    label: Script-built competitor home
+    why-it-matters: The prices appear only after the page script runs.
+    kind: competitor
+    watch: pricing
+    render: true   # needs the optional playwright-core package and Chrome or Edge

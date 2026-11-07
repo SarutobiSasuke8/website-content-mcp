@@ -97,13 +97,19 @@ export class PriceHistoryStore {
     const lastByPlan = new Map<string, PricePoint>();
     for (const point of history.points) lastByPlan.set(planKey(point.plan), point);
     const renamedTo = new Map((meta.renames ?? []).map((rename) => [planKey(rename.to), rename.from]));
-    const renamedFrom = new Set((meta.renames ?? []).map((rename) => planKey(rename.from)));
+    // A plan that was renamed, now or earlier, is not a plan that disappeared.
+    const renamedFrom = new Set([
+      ...(meta.renames ?? []).map((rename) => planKey(rename.from)),
+      ...history.points.flatMap((point) => (point.renamedFrom ? [planKey(point.renamedFrom)] : [])),
+    ]);
     const added: PricePoint[] = [];
 
     const present = new Set<string>();
     for (const plan of table.plans) {
       const key = planKey(plan.name);
       present.add(key);
+      // A plan with no stated price has nothing to chart.
+      if (plan.amount === undefined) continue;
       const point = pointOf(plan, meta.date, meta.source);
       const previousName = renamedTo.get(key);
       const previous = lastByPlan.get(key) ?? (previousName ? lastByPlan.get(planKey(previousName)) : undefined);
