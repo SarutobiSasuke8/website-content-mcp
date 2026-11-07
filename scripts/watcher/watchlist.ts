@@ -28,6 +28,8 @@ export interface WatchEntry {
   watch: PageType;
   /** Noise to remove before comparing: CSS selectors and text patterns. */
   ignore?: { selectors?: string[] | undefined; text?: string[] | undefined };
+  /** Read the page after running its script. Needs the optional playwright-core package and Chrome or Edge. Off by default. */
+  render: boolean;
   /** A change must appear in this many consecutive runs before it counts. Defaults to 1. */
   confirmRuns: number;
   /** Price changes smaller than this many per cent are shown but never material. Defaults to 0. */
@@ -57,6 +59,7 @@ const rawEntry = z.object({
     selector: z.string().trim().min(1).max(300).optional(),
     heading: z.string().trim().min(1).max(200).optional(),
   }).strict().optional(),
+  render: z.boolean().optional(),
   "confirm-runs": z.number().int().min(1).max(3).optional(),
   confirmRuns: z.number().int().min(1).max(3).optional(),
   "price-threshold-pct": z.number().min(0).max(100).optional(),
@@ -111,6 +114,7 @@ export function parseWatchlist(document: unknown): Watchlist {
       ...(entry.project ? { project: entry.project } : {}),
       watch: entry.watch ?? "general",
       ...(entry.ignore ? { ignore: entry.ignore } : {}),
+      render: entry.render ?? false,
       confirmRuns: entry["confirm-runs"] ?? entry.confirmRuns ?? 1,
       priceThresholdPct: entry["price-threshold-pct"] ?? entry.priceThresholdPct ?? 0,
     };

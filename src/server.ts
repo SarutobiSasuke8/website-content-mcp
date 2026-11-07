@@ -199,6 +199,25 @@ export function createContentMcpServer(
     );
 
     server.registerTool(
+      "content_price_history",
+      {
+        title: "Read the stored price history of a page",
+        description:
+          "Return the stored time series of plan prices for a page (date, plan, price, currency, billing period, unit and the content hash it came from), oldest first, plus the latest price of each listed plan. History is written by content_diff and by the website-content-watcher whenever a page's plan cards change; it never calls the network. A null price means the plan was no longer listed. Currencies are never converted.",
+        inputSchema: z.object({
+          url: urlInput,
+          site: siteInput,
+          plan: z.string().trim().min(1).max(80).optional().describe("Only this plan, matched by name."),
+          limit: z.number().int().min(1).max(1000).default(200).describe("Most recent points to return."),
+        }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      },
+      async ({ url, site, plan, limit }) => runTool(async () => ({
+        history: await service.getPriceHistory(url, { limit, ...(site ? { site } : {}), ...(plan ? { plan } : {}) }),
+      })),
+    );
+
+    server.registerTool(
       "content_diff",
       {
         title: "Diff a page against its stored baseline",

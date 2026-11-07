@@ -33,6 +33,7 @@ contracts:
       - content_extract_facts
       - content_refresh
       - content_site_health
+      - content_price_history
       - content_diff
       - content_search
       - content_get_sitemap
@@ -45,6 +46,7 @@ contracts:
       content_get_page: fixtures/content_get_page.input.schema.json
       content_extract_facts: fixtures/content_extract_facts.input.schema.json
       content_site_health: fixtures/content_site_health.input.schema.json
+      content_price_history: fixtures/content_price_history.input.schema.json
       content_diff: fixtures/content_diff.input.schema.json
       content_refresh: fixtures/content_refresh.input.schema.json
       content_search: fixtures/content_search.input.schema.json
@@ -120,6 +122,14 @@ contracts:
       golden:
         path: fixtures/content_diff_unchanged.golden.json
         ignore_paths: [diff.new.fetchedAt, diff.old.fetchedAt, diff.summary]
+
+  # Price history never touches the network; a page that was never compared has none.
+  - name: price_history_empty_golden
+    tool: content_price_history
+    input: { url: "/pricing.html" }
+    assert:
+      golden:
+        path: fixtures/content_price_history_empty.golden.json
 
   # Deny and fail-closed paths.
   - name: deny_site_not_on_allowlist

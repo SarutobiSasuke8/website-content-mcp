@@ -200,6 +200,11 @@ export class Fetcher {
    * Fetch a URL. `limits.maxBytes` can lower, never raise, the configured body
    * cap for one call, such as a bulk health check that wants small pages.
    */
+  /** Wait for this host's turn in the rate limit without making a request, for callers that load the page another way. */
+  public waitTurn(url: string): Promise<void> {
+    return this.enqueue(hostOf(url), () => Promise.resolve());
+  }
+
   public fetch(url: string, conditional: ConditionalHeaders = {}, limits: { maxBytes?: number } = {}): Promise<FetchRecord> {
     const maxBytes = Math.min(this.options.maxBytes, limits.maxBytes ?? this.options.maxBytes);
     return this.enqueue(hostOf(url), async () => {

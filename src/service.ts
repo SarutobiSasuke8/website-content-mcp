@@ -7,6 +7,7 @@ import { applyIgnore, restrictHtml } from "./section.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { diffLines, summarizeDiff } from "./diff.js";
 import { auditHtml, comparableUrl, duplicateTitleFindings, looksLikeAsset, pageFindings, SEVERITIES } from "./site-health.js";
+import { PriceHistoryStore } from "./price-history.js";
 import { parseSitemap } from "./sitemap.js";
 
 import type { DiskCache } from "./cache.js";
@@ -14,6 +15,8 @@ import type { LineDiff } from "./diff.js";
 import type { PageFacts } from "./facts.js";
 import type { IgnoreRules, SectionHint } from "./section.js";
 import type { WatchKind } from "./signals.js";
+import type { PricePoint } from "./price-history.js";
+import type { PageRenderer } from "./render.js";
 import type { SnapshotStore } from "./snapshots.js";
 import type { HealthFinding, Severity } from "./site-health.js";
 import type { AppConfig } from "./config.js";
@@ -36,6 +39,8 @@ const MAX_REFRESH_ERRORS = 20;
 const HEALTH_DEADLINE_MS = 120_000;
 /** Largest body read per fetch during a health pass; bigger pages are cut and flagged. */
 const HEALTH_PAGE_BYTES = 1_000_000;
+/** Hard limit for rendering one page in a browser. */
+const RENDER_TIMEOUT_MS = 30_000;
 /** Pause before the second look at a page that answered 404 or 410. */
 const MISSING_RETRY_DELAY_MS = 3_000;
 const EMPTY_ROBOTS: RobotsRules = { disallow: [], allow: [], sitemaps: [] };
@@ -130,6 +135,8 @@ export interface WatchedPage {
    * page, so a caller must never replace a baseline or report a change from it.
    */
   availability: "ok" | "missing" | "unavailable";
+  /** True when the content was read after running the script of the page. */
+  rendered?: boolean;
   /** Why the page was unavailable. */
   unavailableReason?: string;
   status: number;
@@ -173,6 +180,8 @@ export class ContentService {
     private readonly cache: DiskCache,
     private readonly fetcher: Fetcher,
     private readonly snapshots?: SnapshotStore,
+    private readonly priceHistory?: PriceHistoryStore,
+    private readonly renderer?: PageRenderer,
   ) {
     this.baseSite = {
       host: normalizeHost(new URL(config.baseUrl).host),
@@ -417,6 +426,12 @@ export class ContentService {
       ? await this.snapshots.record(url, observation)
       : await this.snapshots.compare(url, observation);
 
+    // Keep a compact series of plan prices whenever the stored version changes.
+    if (store && comparison.status !== "unchanged" && this.priceHistory && isHtml(record)) {
+      const table = extractFacts(record.body, record.finalUrl ?? url).pricingTable;
+      await this.priceHistory.record(url, table, { date: record.fetchedAt.slice(0, 10), source: contentHash });
+    }
+
     const result: PageDiff = {
       url,
       status: comparison.status,
@@ -454,6 +469,30 @@ export class ContentService {
     }
     if (warnings.length > 0) result.warnings = warnings;
     return result;
+  }
+
+  /** Stored price history for a page: every point, or one plan's, plus the latest price of each listed plan. */
+  public async getPriceHistory(
+    rawUrl: string,
+    options: { site?: string; plan?: string; limit?: number } = {},
+  ): Promise<{ url: string; available: boolean; points: PricePoint[]; latest: PricePoint[]; truncated: boolean; note?: string }> {
+    if (!this.priceHistory) throw new Error("Price history is disabled (SNAPSHOT_MAX_ENTRIES=0).");
+    const url = this.resolveAllowed(rawUrl, options.site);
+    const history = await this.priceHistory.read(url);
+    const wanted = options.plan?.toLowerCase().trim();
+    const points = history.points.filter((point) => !wanted || point.plan.toLowerCase() === wanted);
+    const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+    const shown = points.slice(Math.max(0, points.length - limit));
+    const result = {
+      url,
+      available: history.points.length > 0,
+      points: shown,
+      latest: PriceHistoryStore.latest(history.points).filter((point) => !wanted || point.plan.toLowerCase() === wanted),
+      truncated: points.length > shown.length,
+    };
+    return history.points.length === 0
+      ? { ...result, note: "No price history is stored for this URL. It is recorded when content_diff or the watcher sees a page with plan cards whose prices changed or appeared." }
+      : result;
   }
 
   /** Structured, bounded facts read from a page's HTML. Unknown values are omitted. */
@@ -648,7 +687,7 @@ export class ContentService {
    */
   public async watchPage(
     rawUrl: string,
-    options: SectionHint & { site?: string; missingRetryDelayMs?: number; ignore?: IgnoreRules; watch?: WatchKind } = {},
+    options: SectionHint & { site?: string; missingRetryDelayMs?: number; ignore?: IgnoreRules; watch?: WatchKind; render?: boolean } = {},
   ): Promise<WatchedPage> {
     const url = this.resolveAllowed(rawUrl, options.site);
     await this.assertAllowed(url);
@@ -704,24 +743,55 @@ export class ContentService {
 
     let extracted: ExtractedContent;
     let facts: PageFacts | undefined;
+    let body = record.body;
+    let rendered = false;
+    if (options.render && isHtml(record)) {
+      const reason = "rendered content unavailable";
+      if (!this.renderer) {
+        return unavailable(record.status, `${reason}: rendering was requested for this page but no renderer is set up (install playwright-core and use Chrome or Edge).`, loaded.outcome, record.fetchedAt);
+      }
+      try {
+        // The page load counts against the host rate limit like any other request.
+        await this.fetcher.waitTurn?.(url);
+        const host = normalizeHost(new URL(url).host);
+        const page = await withTimeout(
+          this.renderer.render({
+            url: record.finalUrl ?? url,
+            timeoutMs: RENDER_TIMEOUT_MS,
+            userAgent: this.config.userAgent,
+            allowRequest: (target) => isSameSite(target, host) && (target.startsWith("https:") || host === this.baseSite.host),
+          }),
+          RENDER_TIMEOUT_MS + 5_000,
+          "Rendering timed out.",
+        );
+        if (!isSameSite(page.finalUrl, host)) throw new Error(`The page redirected to ${page.finalUrl}, which is a different site.`);
+        body = page.html;
+        rendered = true;
+      } catch (error) {
+        return unavailable(record.status, `${reason}: ${error instanceof Error ? error.message : "unknown error"}`, loaded.outcome, record.fetchedAt);
+      }
+    }
     if (isHtml(record)) {
       const hint: SectionHint = {
         ...(options.selector ? { selector: options.selector } : {}),
         ...(options.section ? { section: options.section } : {}),
       };
-      const restricted = restrictHtml(record.body, record.finalUrl ?? url, hint);
+      const restricted = restrictHtml(body, record.finalUrl ?? url, hint);
       if (restricted === undefined) throw new SectionNotFoundError(url, hint);
       const hinted = Boolean(hint.selector ?? hint.section);
       const ignoring = (options.ignore?.selectors?.length ?? 0) > 0 || (options.ignore?.text?.length ?? 0) > 0;
       const source = ignoring ? applyIgnore(restricted, record.finalUrl ?? url, options.ignore ?? {}) : restricted;
-      extracted = hinted || ignoring ? htmlToMarkdown(source, record.finalUrl ?? url) : await this.extractionOf(record);
+      extracted = hinted || ignoring || rendered ? htmlToMarkdown(source, record.finalUrl ?? url) : await this.extractionOf(record);
       facts = extractFacts(source, record.finalUrl ?? url, options.watch ? { watch: options.watch } : {});
     } else {
       extracted = await this.extractionOf(record);
     }
     if (record.truncated) warnings.push("The response was cut at the size cap, so the content may be incomplete.");
     if (extracted.extractionQuality !== "full") {
-      warnings.push(`Extraction quality is '${extracted.extractionQuality}', so only what the server could read is compared.`);
+      if (rendered) {
+        return unavailable(record.status, "rendered content unavailable: the page still had no readable content after rendering", loaded.outcome, record.fetchedAt);
+      }
+      warnings.push(`Extraction quality is '${extracted.extractionQuality}', so only what the server could read is compared.${options.render ? "" : " If the page builds its content with script, set render: true for it in the watchlist."}`);
     }
     return {
       ...base,
@@ -730,6 +800,7 @@ export class ContentService {
       contentHash: createHash("sha256").update(extracted.markdown).digest("hex"),
       ...(extracted.title ? { title: extracted.title } : {}),
       ...(facts ? { facts } : {}),
+      ...(rendered ? { rendered: true } : {}),
       warnings,
     };
   }
@@ -980,6 +1051,14 @@ function plainTextExtraction(body: string): ExtractedContent {
     extractionQuality: markdown ? "full" : "empty",
     ...(markdown ? {} : { warnings: ["The text response was empty."] }),
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** A 5xx or 429 describes the server's state, not the page. */

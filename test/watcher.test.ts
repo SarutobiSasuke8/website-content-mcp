@@ -274,7 +274,7 @@ void test("the CLI prints help, rejects unknown flags and reports a missing watc
   const err: string[] = [];
   const io = { out: (line: string) => out.push(line), err: (line: string) => err.push(line) };
   assert.equal(await main(["--help"], io), EXIT.OK);
-  assert.match(out.join("\n"), /Exit codes:/u);
+  assert.match(out.join("\n"), /Exit codes \(run\):/u);
   assert.equal(await main(["--nonsense"], io), EXIT.FATAL);
   assert.equal(await main(["--watchlist", path.join(os.tmpdir(), "wcm-no-such-watchlist.yaml")], io), EXIT.FATAL);
   assert.match(err.join("\n"), /Watcher failed/u);

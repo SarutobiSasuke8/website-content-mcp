@@ -1,12 +1,16 @@
+import path from "node:path";
+
 import { DiskCache } from "./cache.js";
 import { normalizeHost } from "./config.js";
 import { Fetcher } from "./fetcher.js";
 import { createPublicDispatcher } from "./network-policy.js";
 import { ContentService } from "./service.js";
+import { PriceHistoryStore } from "./price-history.js";
 import { SnapshotStore } from "./snapshots.js";
 
 import type { AppConfig } from "./config.js";
 import type { FetcherOptions } from "./fetcher.js";
+import type { PageRenderer } from "./render.js";
 
 /** Whether a redirect hop stays on the same site and never drops from https to http. */
 export function redirectAllowed(from: string, to: string): boolean {
@@ -20,7 +24,7 @@ export function redirectAllowed(from: string, to: string): boolean {
   }
 }
 
-export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: Fetcher; service: ContentService; snapshots: SnapshotStore | undefined } {
+export function createRuntime(config: AppConfig, extras: { renderer?: PageRenderer } = {}): { cache: DiskCache; fetcher: Fetcher; service: ContentService; snapshots: SnapshotStore | undefined; priceHistory: PriceHistoryStore | undefined } {
   const cache = new DiskCache(config.cacheDir, config.cacheTtlSeconds, config.cacheMaxEntries);
   const fetcherOptions: FetcherOptions = {
     timeoutMs: config.fetchTimeoutMs,
@@ -50,6 +54,7 @@ export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: F
       maxMarkdownChars: config.snapshotMaxMarkdownChars,
     })
     : undefined;
-  const service = new ContentService(config, cache, fetcher, snapshots);
-  return { cache, fetcher, service, snapshots };
+  const priceHistory = snapshots ? new PriceHistoryStore(path.join(config.snapshotDir, "price-history")) : undefined;
+  const service = new ContentService(config, cache, fetcher, snapshots, priceHistory, extras.renderer);
+  return { cache, fetcher, service, snapshots, priceHistory };
 }

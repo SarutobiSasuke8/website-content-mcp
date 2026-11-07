@@ -8,6 +8,7 @@ import { DiskCache } from "../../src/cache.js";
 import { loadConfig } from "../../src/config.js";
 import { diffLines, findAmounts, normalizeForWatch, summarizeDiff } from "../../src/diff.js";
 import { PriceHistoryStore } from "../../src/price-history.js";
+import { createPlaywrightRenderer } from "../../src/render.js";
 import { createRuntime } from "../../src/runtime.js";
 import { ContentService } from "../../src/service.js";
 import { SnapshotStore } from "../../src/snapshots.js";
@@ -15,6 +16,7 @@ import { diffFacts, factsForComparison } from "./deltas.js";
 import { isReportable, renderReport } from "./report.js";
 
 import type { Fetcher } from "../../src/fetcher.js";
+import type { PageRenderer } from "../../src/render.js";
 import type { PageFacts } from "../../src/facts.js";
 import type { WatchedPage } from "../../src/service.js";
 import type { SnapshotComparison } from "../../src/snapshots.js";
@@ -39,6 +41,8 @@ export interface WatcherOptions {
   userAgent?: string;
   /** Pause before re-checking a page that answered 404 or 410. Defaults to 3000. */
   missingRetryDelayMs?: number;
+  /** Replace the browser renderer, for tests. By default the optional playwright-core package is used, and only for entries with `render: true`. */
+  renderer?: PageRenderer;
 }
 
 export interface RunResult {
@@ -240,6 +244,7 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
   const first = items[0];
   if (!first) throw new Error("The watchlist lists no pages.");
 
+  let renderer: PageRenderer | undefined;
   // A dry run must leave no trace, so its HTTP cache lives in a throwaway directory.
   const cacheDir = dryRun ? await mkdtemp(path.join(os.tmpdir(), "wcm-watch-dry-")) : path.join(outputDir, "cache");
   try {
@@ -254,9 +259,18 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       ...(options.allowPrivateNetwork ? { FETCH_ALLOW_PRIVATE_NETWORK: "true" } : {}),
       ...(options.userAgent ? { USER_AGENT: options.userAgent } : {}),
     } as NodeJS.ProcessEnv);
-    const runtime = createRuntime(config);
+    // A renderer is only started when some entry asks for one. If it cannot start, those entries are reported as unavailable.
+    renderer = options.renderer;
+    if (!renderer && items.some((item) => item.render)) {
+      try {
+        renderer = await createPlaywrightRenderer();
+      } catch {
+        renderer = undefined;
+      }
+    }
+    const runtime = createRuntime(config, renderer ? { renderer } : {});
     const service = options.fetcher
-      ? new ContentService(config, new DiskCache(config.cacheDir, config.cacheTtlSeconds, config.cacheMaxEntries), options.fetcher as Fetcher)
+      ? new ContentService(config, new DiskCache(config.cacheDir, config.cacheTtlSeconds, config.cacheMaxEntries), options.fetcher as Fetcher, undefined, undefined, renderer)
       : runtime.service;
     const store = new SnapshotStore(path.join(outputDir, "snapshots"), {
       retentionDays: 3_650,
@@ -272,6 +286,7 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
         const page = await service.watchPage(entry.url, {
           site: entry.site,
           watch: entry.watch,
+          ...(entry.render ? { render: true } : {}),
           ...(options.missingRetryDelayMs !== undefined ? { missingRetryDelayMs: options.missingRetryDelayMs } : {}),
           ...(entry.selector ? { selector: entry.selector } : {}),
           ...(entry.section ? { section: entry.section } : {}),
@@ -409,5 +424,6 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
     return summary;
   } finally {
     if (dryRun) await rm(cacheDir, { recursive: true, force: true });
+    if (!options.renderer) await renderer?.close?.();
   }
 }
