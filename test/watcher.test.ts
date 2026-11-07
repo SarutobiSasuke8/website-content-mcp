@@ -63,9 +63,9 @@ async function listAll(dir: string): Promise<string[]> {
   return result.sort();
 }
 
-/** Snapshot and report files only; the internal HTTP cache is rewritten on each run by design. */
+/** Snapshot, history and report files only. The internal HTTP cache is rewritten on each run by design, and each run appends one line to the run log. */
 async function outputFiles(out: string): Promise<{ file: string; text: string }[]> {
-  const files = (await listAll(out)).filter((file) => !file.includes(`${path.sep}cache${path.sep}`));
+  const files = (await listAll(out)).filter((file) => !file.includes(`${path.sep}cache${path.sep}`) && path.basename(file) !== "runs.jsonl");
   return Promise.all(files.map(async (file) => ({ file, text: await readFile(file, "utf8") })));
 }
 
@@ -112,7 +112,9 @@ void test("first run baselines without a report and an unchanged re-run writes n
     assert.equal(first.reportPath, undefined);
     assert.equal(exitCodeFor(first), EXIT.OK);
     const afterFirst = await outputFiles(out);
-    assert.equal(afterFirst.length, 2, "one snapshot per page and no report");
+    assert.equal(afterFirst.filter((file) => file.file.endsWith(".json") && !file.file.includes("price-history")).length, 2, "one snapshot per page");
+    assert.equal(afterFirst.filter((file) => file.file.includes("price-history")).length, 1, "one price history, for the page with plans");
+    assert.ok(!afterFirst.some((file) => file.file.includes("reports")), "no report");
 
     const second = await runWatcher(options(fetcher, out));
     assert.equal(second.unchanged, 2);
@@ -135,7 +137,7 @@ void test("a price and button change is reported once, with fact deltas and the 
     const report = await readFile(run.reportPath as string, "utf8");
     assert.match(report, /^---\ntype: watcher-report\nmutability: append-only\nrun-date: 2026-11-14\nsource:\n\x20{2}- "https:\/\/acme\.test\/pricing"/u);
     assert.match(report, /## Material changes/u);
-    assert.match(report, /Plan "Starter" changed from €49\/month to €59\/month/u);
+    assert.match(report, /Plan "Starter" price went up from EUR 49 per month to EUR 59 per month \(\+10, \+20\.4%\)/u);
     assert.match(report, /Button "Book a demo" linking to https:\/\/acme\.test\/book was added/u);
     assert.match(report, /Why it matters: Sets the price anchor\./u);
     assert.doesNotMatch(report, /Own about/u, "unchanged pages are left out of the report");
@@ -262,7 +264,7 @@ void test("diffFacts finds price, plan and button changes and ignores identical 
   const b = extractFacts(html('<div><h3>Basic</h3><p>€12 per month</p></div><div><h3>Plus</h3><p>€30 per month</p></div><a class="btn" href="/b">Join</a>'), "https://x.test/");
   assert.deepEqual(diffFacts(a, a), []);
   const descriptions = diffFacts(a, b).map((change) => `${change.kind}: ${change.description}`);
-  assert.ok(descriptions.some((line) => line.startsWith("price:") && line.includes("€10/month to €12/month")));
+  assert.ok(descriptions.some((line) => line.startsWith("price:") && line.includes("EUR 10 per month to EUR 12 per month")));
   assert.ok(descriptions.some((line) => line.startsWith("plan:") && line.includes('"Plus"')));
   assert.ok(descriptions.some((line) => line.startsWith("cta:") && line.includes("now links to https://x.test/b")));
 });

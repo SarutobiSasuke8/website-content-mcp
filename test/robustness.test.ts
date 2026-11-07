@@ -59,7 +59,7 @@ const opts = (fetcher: ScriptedFetcher, out: string, now = new Date("2026-11-14T
 
 async function snapshotFiles(out: string): Promise<{ name: string; text: string }[]> {
   const dir = path.join(out, "snapshots");
-  const names = await readdir(dir).catch(() => [] as string[]);
+  const names = (await readdir(dir, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isFile()).map((entry) => entry.name);
   return Promise.all(names.sort().map(async (name) => ({ name, text: await readFile(path.join(dir, name), "utf8") })));
 }
 
@@ -190,10 +190,10 @@ void test("hostile page text cannot become task fields, tags, comments or mentio
 
 void test("the task id changes with the day and values, and only an open task suppresses a repeat", () => {
   const url = "https://rival.test/pricing";
-  const a = changeId(url, 'Plan "Starter" changed from €49/month to €59/month.', "2026-11-14");
+  const a = changeId(url, 'Plan "Starter" changed from EUR 49 per month to EUR 59 per month.', "2026-11-14");
   const back = changeId(url, 'Plan "Starter" changed from €59/month to €49/month.', "2026-11-21");
   assert.notEqual(a, back);
-  assert.notEqual(a, changeId(url, 'Plan "Starter" changed from €49/month to €59/month.', "2026-11-21"));
+  assert.notEqual(a, changeId(url, 'Plan "Starter" changed from EUR 49 per month to EUR 59 per month.', "2026-11-21"));
   const inbox = [`- [ ] open [watcher:: ${a}] #task #inbox`, `- [x] done [watcher:: ${back}] #task #inbox`].join("\n");
   assert.deepEqual([...openTaskIds(inbox)], [a]);
 });
@@ -217,17 +217,17 @@ void test("two entries for the same change in one run write one task, and a comp
     fetcher.script(PAGE, { status: 200, body: body("€59") });
     const run = await runWatcher({ ...base, now: new Date("2026-11-14T08:00:00Z") });
     const feed = await writeVaultFeed(run, { vaultDir: vault });
-    const priceTasks = feed.tasks.filter((line) => line.includes("€49/month to €59/month"));
+    const priceTasks = feed.tasks.filter((line) => line.includes("EUR 49 per month to EUR 59 per month"));
     assert.equal(priceTasks.length, 1, "identical change from two entries is written once");
 
     // Tick it, then run the same change again the same day: a completed task does not suppress it.
     const ticked = (await readFile(inboxFile, "utf8")).replaceAll("- [ ]", "- [x]");
     await writeFile(inboxFile, ticked);
     const again = await writeVaultFeed(run, { vaultDir: vault });
-    assert.equal(again.tasks.filter((line) => line.includes("€49/month to €59/month")).length, 1);
+    assert.equal(again.tasks.filter((line) => line.includes("EUR 49 per month to EUR 59 per month")).length, 1);
     // But an open one does suppress it.
     const third = await writeVaultFeed(run, { vaultDir: vault });
-    assert.equal(third.tasks.filter((line) => line.includes("€49/month to €59/month")).length, 0);
+    assert.equal(third.tasks.filter((line) => line.includes("EUR 49 per month to EUR 59 per month")).length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

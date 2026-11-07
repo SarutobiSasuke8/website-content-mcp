@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { DiskCache } from "../../src/cache.js";
 import { loadConfig } from "../../src/config.js";
 import { diffLines, findAmounts, normalizeForWatch, summarizeDiff } from "../../src/diff.js";
+import { PriceHistoryStore } from "../../src/price-history.js";
 import { createRuntime } from "../../src/runtime.js";
 import { ContentService } from "../../src/service.js";
 import { SnapshotStore } from "../../src/snapshots.js";
@@ -49,6 +50,8 @@ export interface RunResult {
   errors: number;
   /** Pages that could not be observed this time (5xx, 429, timeouts, blocked). Nothing was stored for them. */
   unavailable: number;
+  /** Pages whose change has been seen fewer times than their `confirm-runs` setting needs. */
+  pending: number;
   /** Markdown for the run when at least one page changed. */
   reportMarkdown?: string;
   /** Path of the report written, when not a dry run. */
@@ -93,37 +96,38 @@ function classify(entry: WatchEntry, page: WatchedPage, comparison: SnapshotComp
   if (!baseline) return result;
 
   const wasGone = (baseline.status ?? 200) >= 400;
-  const isGone = page.status >= 400;
+  const isGone = page.availability === "missing";
   if (isGone && !wasGone) {
     result.status = "removed";
     result.summary = `The page now returns HTTP ${page.status} and has been removed or moved.`;
-    result.factChanges.push({ kind: "page", material: true, description: `Page removed: it now returns HTTP ${page.status}.` });
+    result.factChanges.push({ kind: "page", severity: "high", material: true, type: "page_removed", description: `Page removed: it now returns HTTP ${page.status}.` });
     return result;
   }
   if (!isGone && wasGone) {
     result.status = "restored";
     result.summary = "The page is available again.";
-    result.factChanges.push({ kind: "page", material: true, description: "Page restored: it is available again." });
+    result.factChanges.push({ kind: "page", severity: "medium", material: true, type: "page_restored", description: "Page restored: it is available again." });
     return result;
   }
 
   result.status = "changed";
   const diff = diffLines(baseline.markdown, page.markdown);
   result.diff = diff;
-  const oldTitle = baseline.title;
-  result.summary = summarizeDiff(diff, oldTitle, page.title);
+  result.summary = summarizeDiff(diff, baseline.title, page.title);
   if (diff.addedCount === 0 && diff.removedCount === 0) {
     result.summary = "The visible text is the same; the page structure or its facts changed.";
   }
-  const changes: FactChange[] = diffFacts(baseline.facts as PageFacts | undefined, page.facts);
+  const changes: FactChange[] = diffFacts(baseline.facts as PageFacts | undefined, page.facts, { priceThresholdPct: entry.priceThresholdPct });
   // Prices written in plain text also count when the page offers no structured price.
-  if (!changes.some((change) => change.kind === "price")) {
+  if (!changes.some((change) => change.kind === "price" || change.kind === "plan")) {
     const gone = [...new Set(diff.removed.flatMap((line) => findAmounts(line)))].filter((amount) => !diff.added.some((line) => findAmounts(line).includes(amount)));
     const appeared = [...new Set(diff.added.flatMap((line) => findAmounts(line)))].filter((amount) => !diff.removed.some((line) => findAmounts(line).includes(amount)));
     if (gone.length > 0 || appeared.length > 0) {
       changes.push({
         kind: "price",
+        severity: "high",
         material: true,
+        type: "amounts_changed",
         description: `Amounts in the text changed: ${gone.length > 0 ? `no longer shown ${gone.slice(0, 4).join(", ")}` : ""}${gone.length > 0 && appeared.length > 0 ? "; " : ""}${appeared.length > 0 ? `now shown ${appeared.slice(0, 4).join(", ")}` : ""}.`,
       });
     }
@@ -141,9 +145,96 @@ async function nextReportPath(dir: string, runDate: Date, suffix = "Watcher Repo
 
 export { nextReportPath };
 
+// Pending confirmation state: a change must be seen on consecutive runs before it counts.
+
+interface Pending {
+  compareKey: string;
+  count: number;
+  since: string;
+}
+
+const pendingFile = (outputDir: string, key: string): string => path.join(outputDir, "pending", `${sha256(key)}.json`);
+
+async function readPending(outputDir: string, key: string): Promise<Pending | undefined> {
+  try {
+    return JSON.parse(await readFile(pendingFile(outputDir, key), "utf8")) as Pending;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writePending(outputDir: string, key: string, pending: Pending): Promise<void> {
+  await mkdir(path.join(outputDir, "pending"), { recursive: true });
+  await writeFile(pendingFile(outputDir, key), JSON.stringify(pending), "utf8");
+}
+
+// Append-only logs the weekly digest reads. Both are bounded.
+
+export interface EventLogEntry {
+  date: string;
+  url: string;
+  label: string;
+  entryKind: string;
+  watch: string;
+  project?: string;
+  kind: string;
+  severity: string;
+  type?: string;
+  description: string;
+  plan?: string;
+  old?: string;
+  new?: string;
+  absoluteChange?: number;
+  percentChange?: number;
+}
+
+export interface RunLogEntry {
+  at: string;
+  date: string;
+  checked: number;
+  changed: number;
+  baselined: number;
+  unchanged: number;
+  errors: number;
+  unavailable: number;
+  pending: number;
+  problems: { url: string; label: string; status: "error" | "unavailable"; reason: string }[];
+}
+
+const MAX_EVENT_LINES = 20_000;
+const MAX_RUN_LINES = 2_000;
+
+async function appendBounded(file: string, lines: string[], max: number): Promise<void> {
+  if (lines.length === 0) return;
+  await mkdir(path.dirname(file), { recursive: true });
+  await appendFile(file, `${lines.join("\n")}\n`, "utf8");
+  const text = await readFile(file, "utf8");
+  const all = text.split("\n").filter(Boolean);
+  if (all.length > max) await writeFile(file, `${all.slice(all.length - max).join("\n")}\n`, "utf8");
+}
+
+export async function readJsonLines<T>(file: string): Promise<T[]> {
+  if (!existsSync(file)) return [];
+  const entries: T[] = [];
+  for (const line of (await readFile(file, "utf8")).split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      entries.push(JSON.parse(line) as T);
+    } catch {
+      // A damaged line is skipped, not fatal.
+    }
+  }
+  return entries;
+}
+
+export const EVENTS_FILE = "events.jsonl";
+export const RUNS_FILE = "runs.jsonl";
+export const HISTORY_DIR = ["snapshots", "price-history"] as const;
+
 export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
   const dryRun = options.dryRun ?? false;
   const runDate = options.now ?? new Date();
+  const runDay = runDate.toISOString().slice(0, 10);
   const outputDir = path.resolve(options.outputDir);
   const items = options.watchlist.items;
   const first = items[0];
@@ -172,6 +263,7 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       maxEntries: 10_000,
       maxMarkdownChars: config.snapshotMaxMarkdownChars,
     });
+    const history = new PriceHistoryStore(path.join(outputDir, ...HISTORY_DIR));
 
     const results: EntryResult[] = [];
     const written: string[] = [];
@@ -179,19 +271,22 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       try {
         const page = await service.watchPage(entry.url, {
           site: entry.site,
+          watch: entry.watch,
           ...(options.missingRetryDelayMs !== undefined ? { missingRetryDelayMs: options.missingRetryDelayMs } : {}),
           ...(entry.selector ? { selector: entry.selector } : {}),
           ...(entry.section ? { section: entry.section } : {}),
+          ...(entry.ignore ? { ignore: entry.ignore } : {}),
         });
         if (page.availability === "unavailable") {
           // Not an observation: no baseline is touched and nothing material is raised.
           results.push({ entry, status: "unavailable", warnings: [...page.warnings], factChanges: [], ...(page.unavailableReason ? { error: page.unavailableReason } : {}) });
           continue;
         }
+        const compareKey = watchKeyHash(page);
         const observation = {
           markdown: page.markdown,
           contentHash: page.contentHash,
-          compareKey: watchKeyHash(page),
+          compareKey,
           fetchedAt: page.fetchedAt,
           status: page.status,
           ...(page.etag ? { etag: page.etag } : {}),
@@ -199,12 +294,44 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
           ...(page.title ? { title: page.title } : {}),
           ...(page.facts ? { facts: page.facts } : {}),
         };
-        // A copy served only because the origin failed is never promoted to a baseline.
-        const persist = !dryRun && page.outcome !== "stale-on-error";
         const key = watchKey(entry);
-        const comparison = persist ? await store.record(key, observation) : await store.compare(key, observation);
-        if (persist && comparison.status !== "unchanged") written.push(path.join(outputDir, "snapshots"));
-        results.push(classify(entry, page, comparison));
+        const persist = !dryRun;
+        const comparison = await store.compare(key, observation);
+        const pending = await readPending(outputDir, key);
+
+        // A change must be seen on enough consecutive runs before it counts.
+        if (comparison.status === "changed" && entry.confirmRuns > 1) {
+          const count = pending && pending.compareKey === compareKey ? pending.count + 1 : 1;
+          if (count < entry.confirmRuns) {
+            if (persist) {
+              await writePending(outputDir, key, { compareKey, count, since: pending?.compareKey === compareKey ? pending.since : page.fetchedAt });
+              written.push(path.join(outputDir, "pending"));
+            }
+            results.push({
+              entry,
+              status: "pending",
+              warnings: [...page.warnings],
+              factChanges: [],
+              summary: `A change was seen ${count} of ${entry.confirmRuns} times needed, so it is not reported yet.`,
+              after: { fetchedAt: page.fetchedAt, contentHash: page.contentHash, httpStatus: page.status },
+            });
+            continue;
+          }
+        }
+        if (persist) {
+          await store.record(key, observation);
+          if (comparison.status !== "unchanged") written.push(path.join(outputDir, "snapshots"));
+          // A change that reverted, or one that is now confirmed, no longer needs its counter.
+          if (pending) await rm(pendingFile(outputDir, key), { force: true });
+        }
+        const classified = classify(entry, page, comparison);
+        results.push(classified);
+        if (persist && comparison.status !== "unchanged" && page.availability === "ok" && page.facts?.pricingTable) {
+          const renames = classified.factChanges
+            .filter((change) => change.type === "plan_renamed" && change.old && change.new)
+            .map((change) => ({ from: change.old ?? "", to: change.new ?? "" }));
+          await history.record(entry.url, page.facts.pricingTable, { date: runDay, source: page.contentHash, renames });
+        }
       } catch (error) {
         results.push({
           entry,
@@ -225,6 +352,7 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       unchanged: results.filter((result) => result.status === "unchanged").length,
       errors: results.filter((result) => result.status === "error").length,
       unavailable: results.filter((result) => result.status === "unavailable").length,
+      pending: results.filter((result) => result.status === "pending").length,
       dryRun,
       written: [...new Set(written)],
     };
@@ -237,6 +365,46 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
         await writeFile(summary.reportPath, summary.reportMarkdown, "utf8");
         summary.written.push(summary.reportPath);
       }
+    }
+
+    if (!dryRun) {
+      const events: EventLogEntry[] = changedResults.flatMap((result) => result.factChanges.map((change) => {
+        const line: EventLogEntry = {
+          date: runDay,
+          url: result.entry.url,
+          label: result.entry.label,
+          entryKind: result.entry.kind,
+          watch: result.entry.watch,
+          kind: change.kind,
+          severity: change.severity,
+          description: change.description,
+        };
+        if (result.entry.project) line.project = result.entry.project;
+        if (change.type) line.type = change.type;
+        if (change.plan) line.plan = change.plan;
+        if (change.old !== undefined) line.old = change.old;
+        if (change.new !== undefined) line.new = change.new;
+        if (change.absoluteChange !== undefined) line.absoluteChange = change.absoluteChange;
+        if (change.percentChange !== undefined) line.percentChange = change.percentChange;
+        return line;
+      }));
+      await appendBounded(path.join(outputDir, EVENTS_FILE), events.map((event) => JSON.stringify(event)), MAX_EVENT_LINES);
+      const run: RunLogEntry = {
+        at: runDate.toISOString(),
+        date: runDay,
+        checked: results.length,
+        changed: summary.changed,
+        baselined: summary.baselined,
+        unchanged: summary.unchanged,
+        errors: summary.errors,
+        unavailable: summary.unavailable,
+        pending: summary.pending,
+        problems: results
+          .filter((result) => result.status === "error" || result.status === "unavailable")
+          .slice(0, 50)
+          .map((result) => ({ url: result.entry.url, label: result.entry.label, status: result.status as "error" | "unavailable", reason: result.error ?? "unknown" })),
+      };
+      await appendBounded(path.join(outputDir, RUNS_FILE), [JSON.stringify(run)], MAX_RUN_LINES);
     }
     return summary;
   } finally {

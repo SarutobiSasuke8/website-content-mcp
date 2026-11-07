@@ -71,7 +71,7 @@ void test("a changed run writes one dated append-only note and one task per mate
       assert.doesNotMatch(line, /#next/u);
     }
     assert.match(inbox, /## Website watcher changes, 2026-11-14\n\nSource: \[\[Portfolio\/Dev\/MCP Servers\/Watcher Output\/2026-11-14 Watcher Report\]\]/u);
-    assert.ok(added.some((line) => line.includes("€49/month to €59/month")));
+    assert.ok(added.some((line) => line.includes("EUR 49 per month to EUR 59 per month")));
   });
 });
 

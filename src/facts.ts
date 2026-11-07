@@ -2,7 +2,11 @@ import { JSDOM } from "jsdom";
 
 import { extractProducts, extractSchemaTypes } from "./content.js";
 import { findAmounts } from "./diff.js";
+import { extractPricingTable } from "./pricing.js";
+import { certificationsOf, heroOf, integrationNamesOf, releasesOf, rolesOf } from "./signals.js";
 
+import type { PricingTable } from "./pricing.js";
+import type { HeroFact, ReleaseFact, RoleFact, WatchKind } from "./signals.js";
 import type { ProductData } from "./types.js";
 
 /**
@@ -25,6 +29,18 @@ export interface PageFacts {
     /** Fixed phrases found on the page, such as "free trial" or "request a quote". */
     phrases?: string[];
   };
+  /** Plan-level prices: name, price, currency, billing period, unit, free and trial flags, features. */
+  pricingTable?: PricingTable;
+  /** Positioning: the H1, meta description, first calls to action and lead paragraph. */
+  hero?: HeroFact;
+  /** Open roles. Read only for careers pages. */
+  roles?: RoleFact[];
+  /** Integration or partner names. Read only for integration pages. */
+  integrations?: string[];
+  /** Certifications and trust mechanisms mentioned. Read only for security pages. */
+  certifications?: string[];
+  /** Version or dated headings. Read only for changelog pages. */
+  releases?: ReleaseFact[];
   /** schema.org types declared in JSON-LD, such as Organization or Product. */
   schemaTypes?: string[];
   /** schema.org Product and Offer facts from JSON-LD. */
@@ -244,7 +260,7 @@ function itemsOf(doc: Document, base: string): { title: string; href: string; da
 }
 
 /** Read bounded structured facts from raw HTML. Never throws; failures become warnings. */
-export function extractFacts(html: string, url: string): PageFacts {
+export function extractFacts(html: string, url: string, options: { watch?: WatchKind } = {}): PageFacts {
   const facts: PageFacts = {};
   const warnings: string[] = [];
   let doc: Document;
@@ -281,6 +297,27 @@ export function extractFacts(html: string, url: string): PageFacts {
   if (ctas && ctas.length > 0) facts.callsToAction = ctas;
   const pricing = guarded("Pricing signals", () => pricingOf(doc));
   if (pricing) facts.pricing = pricing;
+  const hero = guarded("Hero", () => heroOf(doc, ctas ?? []));
+  if (hero) facts.hero = hero;
+  const watch = options.watch ?? "general";
+  if (watch === "careers") {
+    const roles = guarded("Roles", () => rolesOf(doc, url));
+    if (roles && roles.length > 0) facts.roles = roles;
+  }
+  if (watch === "integrations") {
+    const names = guarded("Integrations", () => integrationNamesOf(doc));
+    if (names && names.length > 0) facts.integrations = names;
+  }
+  if (watch === "security") {
+    const certifications = guarded("Certifications", () => certificationsOf(doc));
+    if (certifications && certifications.length > 0) facts.certifications = certifications;
+  }
+  if (watch === "changelog") {
+    const releases = guarded("Releases", () => releasesOf(doc));
+    if (releases && releases.length > 0) facts.releases = releases;
+  }
+  const pricingTable = guarded("Pricing table", () => extractPricingTable(doc));
+  if (pricingTable) facts.pricingTable = pricingTable;
   const types = guarded("Schema types", () => extractSchemaTypes(doc));
   if (types && types.length > 0) facts.schemaTypes = types.slice(0, MAX_SCHEMA_TYPES);
   const products = guarded("Product data", () => extractProducts(doc));

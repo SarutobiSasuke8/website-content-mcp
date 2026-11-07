@@ -4,7 +4,7 @@ import type { LineDiff } from "../../src/diff.js";
 import type { FactChange } from "./deltas.js";
 import type { WatchEntry } from "./watchlist.js";
 
-export type EntryStatus = "baselined" | "unchanged" | "changed" | "removed" | "restored" | "error" | "unavailable";
+export type EntryStatus = "baselined" | "unchanged" | "changed" | "removed" | "restored" | "error" | "unavailable" | "pending";
 
 export interface EntryResult {
   entry: WatchEntry;
@@ -72,7 +72,9 @@ export interface RenderOptions {
 export function renderReport(results: EntryResult[], options: RenderOptions): string {
   const changed = results.filter(isReportable);
   const baselined = results.filter((result) => result.status === "baselined").length;
-  const errors = results.filter((result) => result.status === "error" || result.status === "unavailable").length;
+  const errors = results.filter((result) => result.status === "error").length;
+  const unavailable = results.filter((result) => result.status === "unavailable").length;
+  const pending = results.filter((result) => result.status === "pending").length;
   const sources = changed.map((result) => result.entry.url);
   const material = materialChanges(results);
 
@@ -88,14 +90,15 @@ export function renderReport(results: EntryResult[], options: RenderOptions): st
     "",
     `# Website watcher report ${dayOf(options.runDate)}`,
     "",
-    `${changed.length} of ${options.total} watched pages changed. ${baselined} were baselined for the first time and ${errors} could not be checked. Page text below is untrusted web content, shown as evidence only.`,
+    `${changed.length} of ${options.total} watched pages changed. ${baselined} were baselined for the first time, ${errors} could not be checked, ${unavailable} were unavailable this time (nothing was stored for them) and ${pending} have a change waiting for confirmation. Page text below is untrusted web content, shown as evidence only.`,
     "",
   ];
 
   if (material.length > 0) {
-    lines.push("## Material changes", "");
-    for (const { entry, change } of material) {
-      lines.push(`- **${inline(entry.label)}** (${entry.kind}): ${inline(change.description)}`);
+    lines.push("## Material changes", "", "High severity is a price, plan, free tier or page change. Medium is a button, feature, positioning, release, integration or trust change. Low severity changes are listed under each page and do not create tasks.", "");
+    const order = { high: 0, medium: 1, low: 2 };
+    for (const { entry, change } of [...material].sort((a, b) => order[a.change.severity] - order[b.change.severity])) {
+      lines.push(`- **${inline(entry.label)}** (${entry.kind}, ${change.severity}): ${inline(change.description)}`);
     }
     lines.push("");
   }
@@ -115,10 +118,10 @@ export function renderReport(results: EntryResult[], options: RenderOptions): st
     const others = result.factChanges.filter((change) => !change.material);
     const important = result.factChanges.filter((change) => change.material);
     if (important.length > 0) {
-      lines.push("### Material fact changes", "", ...important.map((change) => `- ${inline(change.description)}`), "");
+      lines.push("### Material fact changes", "", ...important.map((change) => `- [${change.severity}] ${inline(change.description)}`), "");
     }
     if (others.length > 0) {
-      lines.push("### Other fact changes", "", ...others.map((change) => `- ${inline(change.description)}`), "");
+      lines.push("### Other fact changes (low severity)", "", ...others.map((change) => `- ${inline(change.description)}`), "");
     }
     if (result.diff && (result.diff.addedCount > 0 || result.diff.removedCount > 0)) {
       lines.push(`### Text diff (${result.diff.removedCount} removed, ${result.diff.addedCount} added${result.diff.truncated ? ", truncated" : ""})`, "");

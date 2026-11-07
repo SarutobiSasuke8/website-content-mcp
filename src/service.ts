@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { normalizeHost, parseSiteHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
 import { extractFacts } from "./facts.js";
-import { restrictHtml } from "./section.js";
+import { applyIgnore, restrictHtml } from "./section.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { diffLines, summarizeDiff } from "./diff.js";
 import { auditHtml, comparableUrl, duplicateTitleFindings, looksLikeAsset, pageFindings, SEVERITIES } from "./site-health.js";
@@ -12,7 +12,8 @@ import { parseSitemap } from "./sitemap.js";
 import type { DiskCache } from "./cache.js";
 import type { LineDiff } from "./diff.js";
 import type { PageFacts } from "./facts.js";
-import type { SectionHint } from "./section.js";
+import type { IgnoreRules, SectionHint } from "./section.js";
+import type { WatchKind } from "./signals.js";
 import type { SnapshotStore } from "./snapshots.js";
 import type { HealthFinding, Severity } from "./site-health.js";
 import type { AppConfig } from "./config.js";
@@ -647,7 +648,7 @@ export class ContentService {
    */
   public async watchPage(
     rawUrl: string,
-    options: SectionHint & { site?: string; missingRetryDelayMs?: number } = {},
+    options: SectionHint & { site?: string; missingRetryDelayMs?: number; ignore?: IgnoreRules; watch?: WatchKind } = {},
   ): Promise<WatchedPage> {
     const url = this.resolveAllowed(rawUrl, options.site);
     await this.assertAllowed(url);
@@ -711,8 +712,10 @@ export class ContentService {
       const restricted = restrictHtml(record.body, record.finalUrl ?? url, hint);
       if (restricted === undefined) throw new SectionNotFoundError(url, hint);
       const hinted = Boolean(hint.selector ?? hint.section);
-      extracted = hinted ? htmlToMarkdown(restricted, record.finalUrl ?? url) : await this.extractionOf(record);
-      facts = extractFacts(restricted, record.finalUrl ?? url);
+      const ignoring = (options.ignore?.selectors?.length ?? 0) > 0 || (options.ignore?.text?.length ?? 0) > 0;
+      const source = ignoring ? applyIgnore(restricted, record.finalUrl ?? url, options.ignore ?? {}) : restricted;
+      extracted = hinted || ignoring ? htmlToMarkdown(source, record.finalUrl ?? url) : await this.extractionOf(record);
+      facts = extractFacts(source, record.finalUrl ?? url, options.watch ? { watch: options.watch } : {});
     } else {
       extracted = await this.extractionOf(record);
     }

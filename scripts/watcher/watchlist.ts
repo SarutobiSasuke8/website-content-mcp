@@ -6,6 +6,11 @@ import { z } from "zod";
 
 export type WatchKind = "own-site" | "competitor";
 
+/** What the page is, which decides the typed events it can produce. */
+export type PageType = "general" | "pricing" | "changelog" | "blog" | "careers" | "integrations" | "security";
+
+const PAGE_TYPES = ["general", "pricing", "changelog", "blog", "careers", "integrations", "security"] as const;
+
 export interface WatchEntry {
   url: string;
   /** Host of the site; defaults to the URL's host and must match it. */
@@ -13,12 +18,20 @@ export interface WatchEntry {
   label: string;
   whyItMatters: string;
   kind: WatchKind;
-  /** CSS selector narrowing the compared content. */
+  /** CSS selector narrowing the compared content (the focus). */
   selector?: string;
-  /** Heading text narrowing the compared content to that section. */
+  /** Heading text narrowing the compared content to that section (the focus). */
   section?: string;
   /** Vault project name for task lines, for example `Astraeus Business Solutions`. */
   project?: string;
+  /** What the page is; defaults to `general`. Plans are read from every page that has plan cards. */
+  watch: PageType;
+  /** Noise to remove before comparing: CSS selectors and text patterns. */
+  ignore?: { selectors?: string[] | undefined; text?: string[] | undefined };
+  /** A change must appear in this many consecutive runs before it counts. Defaults to 1. */
+  confirmRuns: number;
+  /** Price changes smaller than this many per cent are shown but never material. Defaults to 0. */
+  priceThresholdPct: number;
 }
 
 export interface Watchlist {
@@ -35,6 +48,19 @@ const rawEntry = z.object({
   selector: z.string().trim().min(1).max(300).optional(),
   section: z.string().trim().min(1).max(200).optional(),
   project: z.string().trim().min(1).max(120).optional(),
+  watch: z.enum(PAGE_TYPES).optional(),
+  ignore: z.object({
+    selectors: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+    text: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+  }).strict().optional(),
+  focus: z.object({
+    selector: z.string().trim().min(1).max(300).optional(),
+    heading: z.string().trim().min(1).max(200).optional(),
+  }).strict().optional(),
+  "confirm-runs": z.number().int().min(1).max(3).optional(),
+  confirmRuns: z.number().int().min(1).max(3).optional(),
+  "price-threshold-pct": z.number().min(0).max(100).optional(),
+  priceThresholdPct: z.number().min(0).max(100).optional(),
 }).strict();
 
 const rawWatchlist = z.union([
@@ -67,7 +93,9 @@ export function parseWatchlist(document: unknown): Watchlist {
     if (site !== hostOf(entry.url)) {
       throw new Error(`Invalid watchlist: item ${index + 1} ('${entry.label}') has site '${entry.site ?? ""}' but its URL is on '${hostOf(entry.url)}'.`);
     }
-    const key = `${entry.url}\u0000${entry.selector ?? ""}\u0000${entry.section ?? ""}`;
+    const selector = entry.selector ?? entry.focus?.selector;
+    const section = entry.section ?? entry.focus?.heading;
+    const key = [entry.url, selector ?? "", section ?? ""].join("|");
     if (seen.has(key)) throw new Error(`Invalid watchlist: item ${index + 1} ('${entry.label}') repeats an earlier URL and hint.`);
     seen.add(key);
     const whyItMatters = entry["why-it-matters"] ?? entry.whyItMatters;
@@ -78,9 +106,13 @@ export function parseWatchlist(document: unknown): Watchlist {
       label: entry.label,
       whyItMatters,
       kind: entry.kind,
-      ...(entry.selector ? { selector: entry.selector } : {}),
-      ...(entry.section ? { section: entry.section } : {}),
+      ...(selector ? { selector } : {}),
+      ...(section ? { section } : {}),
       ...(entry.project ? { project: entry.project } : {}),
+      watch: entry.watch ?? "general",
+      ...(entry.ignore ? { ignore: entry.ignore } : {}),
+      confirmRuns: entry["confirm-runs"] ?? entry.confirmRuns ?? 1,
+      priceThresholdPct: entry["price-threshold-pct"] ?? entry.priceThresholdPct ?? 0,
     };
   });
   return { items };
