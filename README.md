@@ -170,6 +170,7 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `SITE_BASE_URL` | ✅ | - | The site whose content is exposed. |
 | `SITE_SITEMAP_URL` | | `<base>/sitemap.xml` | Sitemap location. |
 | `SITE_PAGES` | | - | Comma-separated fallback page list (absolute or base-relative). |
+| `SITE_ALLOWLIST` | | - | Comma-separated hosts (or URLs) that tools may select with the optional `site` argument, in addition to the base site, which stays the default. Each site gets its own robots.txt rules, cache entries, search scope and request pacing. Redirects to a different site are refused. |
 | `SITE_ALLOWED_HOSTS` | | - | Extra hosts that may be fetched. The base URL's host is always allowed. |
 | `CACHE_DIR` | | `.cache` | Disk cache directory. |
 | `CACHE_TTL_SECONDS` | | `3600` | Cache TTL (0 disables caching). |

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { normalizeHost } from "./config.js";
+import { normalizeHost, parseSiteHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { parseSitemap } from "./sitemap.js";
@@ -41,6 +41,32 @@ export class RobotsDisallowedError extends Error {
   }
 }
 
+export class SiteNotAllowedError extends Error {
+  public constructor(site: string, allowed: string[]) {
+    super(`Site '${site}' is not on the site allowlist (${allowed.join(", ")}).`);
+    this.name = "SiteNotAllowedError";
+  }
+}
+
+/** One allowlisted site: where its pages and sitemap live. */
+export interface SiteContext {
+  host: string;
+  baseUrl: string;
+  sitemapUrl: string;
+  configuredPages: string[];
+}
+
+/** How a load was satisfied, so callers can report 304s and stale fallbacks explicitly. */
+export type LoadOutcome = "fresh-cache" | "fetched" | "not-modified" | "stale-on-error";
+
+export interface LoadResult {
+  record: FetchRecord;
+  fromCache: boolean;
+  outcome: LoadOutcome;
+  /** Why the origin could not be reached, when `outcome` is `stale-on-error`. */
+  staleReason?: string;
+}
+
 export class HostNotAllowedError extends Error {
   public constructor(url: string, allowedHosts: string[]) {
     super(`Refusing to fetch '${url}': host is not in the allowed list (${allowedHosts.join(", ")}).`);
@@ -55,22 +81,56 @@ export class HostNotAllowedError extends Error {
 export class ContentService {
   /** robots.txt rules, cached per origin. */
   private readonly robotsByOrigin = new Map<string, RobotsResult>();
-  private completedRefreshAt: string | null = null;
+  private readonly completedRefreshByHost = new Map<string, string>();
+  private readonly baseSite: SiteContext;
 
   public constructor(
     private readonly config: AppConfig,
     private readonly cache: DiskCache,
     private readonly fetcher: Fetcher,
-  ) {}
+  ) {
+    this.baseSite = {
+      host: normalizeHost(new URL(config.baseUrl).host),
+      baseUrl: config.baseUrl,
+      sitemapUrl: config.sitemapUrl,
+      configuredPages: config.configuredPages,
+    };
+  }
+
+  /**
+   * Resolve the optional `site` argument. Anything not on the site allowlist is
+   * refused before any network access. The base site is the default.
+   */
+  public siteFor(site?: string): SiteContext {
+    if (site === undefined || site.trim() === "") return this.baseSite;
+    let host: string;
+    let origin: string;
+    try {
+      host = parseSiteHost(site);
+      const raw = site.trim();
+      origin = new URL(/^https?:\/\//iu.test(raw) ? raw : `https://${raw}`).origin;
+    } catch {
+      throw new SiteNotAllowedError(site, this.config.siteAllowlist);
+    }
+    if (!this.config.siteAllowlist.includes(host)) throw new SiteNotAllowedError(site, this.config.siteAllowlist);
+    if (host === this.baseSite.host) return this.baseSite;
+    return {
+      host,
+      baseUrl: `${origin}/`,
+      sitemapUrl: new URL("/sitemap.xml", origin).toString(),
+      configuredPages: [],
+    };
+  }
 
   /**
    * Resolve a reference against the base URL and confirm the result is a
    * fetchable http(s) URL on an allowed host.
    */
-  public resolveAllowed(rawUrl: string): string {
+  public resolveAllowed(rawUrl: string, site?: string): string {
+    const context = this.siteFor(site);
     let url: URL;
     try {
-      url = new URL(rawUrl, this.config.baseUrl);
+      url = new URL(rawUrl, context.baseUrl);
     } catch {
       throw new Error(`'${rawUrl}' is not a valid URL.`);
     }
@@ -79,6 +139,9 @@ export class ContentService {
     }
     if (!this.config.allowedHosts.includes(normalizeHost(url.host))) {
       throw new HostNotAllowedError(url.toString(), this.config.allowedHosts);
+    }
+    if (site !== undefined && site.trim() !== "" && normalizeHost(url.host) !== context.host) {
+      throw new HostNotAllowedError(url.toString(), [context.host]);
     }
     return url.toString();
   }
@@ -97,9 +160,9 @@ export class ContentService {
    * of a stale entry, then a plain fetch. A failed fetch falls back to any
    * stale copy rather than erroring.
    */
-  private async load(url: string, force = false): Promise<{ record: FetchRecord; fromCache: boolean }> {
+  public async load(url: string, force = false): Promise<LoadResult> {
     const stale = await this.cache.read(url);
-    if (!force && stale && this.cache.isFresh(stale)) return { record: stale, fromCache: true };
+    if (!force && stale && this.cache.isFresh(stale)) return { record: stale, fromCache: true, outcome: "fresh-cache" };
 
     const conditional: ConditionalHeaders = {};
     if (stale?.etag) conditional.etag = stale.etag;
@@ -111,12 +174,19 @@ export class ContentService {
         // Unchanged upstream: keep the body (and its extraction), reset the clock.
         const revalidated: FetchRecord = { ...stale, fetchedAt: fetched.fetchedAt };
         await this.cache.set(revalidated);
-        return { record: revalidated, fromCache: true };
+        return { record: revalidated, fromCache: true, outcome: "not-modified" };
       }
       await this.cache.set(fetched);
-      return { record: fetched, fromCache: false };
+      return { record: fetched, fromCache: false, outcome: "fetched" };
     } catch (error) {
-      if (stale) return { record: stale, fromCache: true };
+      if (stale) {
+        return {
+          record: stale,
+          fromCache: true,
+          outcome: "stale-on-error",
+          staleReason: error instanceof Error ? error.message : "unknown error",
+        };
+      }
       throw error;
     }
   }
@@ -125,7 +195,7 @@ export class ContentService {
    * Markdown for a record, computed once and written back to the cache so
    * search never re-parses the same HTML.
    */
-  private async extractionOf(record: FetchRecord): Promise<ExtractedContent> {
+  public async extractionOf(record: FetchRecord): Promise<ExtractedContent> {
     if (record.extracted?.extractionMethod && record.extracted.extractionQuality) return record.extracted;
     const extracted = isPlainText(record)
       ? plainTextExtraction(record.body)
@@ -174,9 +244,9 @@ export class ContentService {
 
   public async getPage(
     rawUrl: string,
-    options: { maxLength?: number; refresh?: boolean } = {},
+    options: { maxLength?: number; refresh?: boolean; site?: string } = {},
   ): Promise<PageContent> {
-    const url = this.resolveAllowed(rawUrl);
+    const url = this.resolveAllowed(rawUrl, options.site);
     await this.assertAllowed(url);
     const { record, fromCache } = await this.load(url, options.refresh ?? false);
     if (record.status >= 400) throw new Error(`Fetch failed for '${url}' with HTTP ${record.status}.`);
@@ -244,19 +314,22 @@ export class ContentService {
     return { entries, warnings };
   }
 
-  public async getSitemap(): Promise<{ sitemapUrl: string; available: boolean; entries: SitemapEntry[]; warnings: string[] }> {
-    const result = await this.loadSitemapEntries(this.config.sitemapUrl);
-    return { sitemapUrl: this.config.sitemapUrl, available: result.entries.length > 0, ...result };
+  public async getSitemap(site?: string): Promise<{ site: string; sitemapUrl: string; available: boolean; entries: SitemapEntry[]; warnings: string[] }> {
+    const context = this.siteFor(site);
+    const result = await this.loadSitemapEntries(context.sitemapUrl);
+    return { site: context.host, sitemapUrl: context.sitemapUrl, available: result.entries.length > 0, ...result };
   }
 
-  public async listPages(limit: number, offset = 0): Promise<{ source: PageListing["source"]; pages: PageListing[]; warnings: string[] }> {
+  public async listPages(limit: number, offset = 0, site?: string): Promise<{ site: string; source: PageListing["source"]; pages: PageListing[]; warnings: string[] }> {
+    const context = this.siteFor(site);
     const start = Math.max(0, Math.floor(offset));
     const warnings: string[] = [];
     // 1. Configured sitemap.
-    const sitemap = await this.loadSitemapEntries(this.config.sitemapUrl);
+    const sitemap = await this.loadSitemapEntries(context.sitemapUrl);
     warnings.push(...sitemap.warnings);
     if (sitemap.entries.length > 0) {
       return {
+        site: context.host,
         source: "sitemap",
         pages: sitemap.entries.slice(start, start + limit).map((entry) => toListing(entry, "sitemap")),
         warnings,
@@ -264,13 +337,14 @@ export class ContentService {
     }
 
     // 2. Sitemaps advertised in robots.txt.
-    const robots = await this.getRobots(new URL(this.config.baseUrl).origin);
+    const robots = await this.getRobots(new URL(context.baseUrl).origin);
     warnings.push(...robots.warnings);
     for (const sitemapUrl of robots.rules.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
       const result = await this.loadSitemapEntries(sitemapUrl);
       warnings.push(...result.warnings);
       if (result.entries.length > 0) {
         return {
+          site: context.host,
           source: "robots",
           pages: result.entries.slice(start, start + limit).map((entry) => toListing(entry, "robots")),
           warnings,
@@ -279,8 +353,9 @@ export class ContentService {
     }
 
     // 3. Configured page list (defaulting to the base URL).
-    const configured = this.config.configuredPages.length > 0 ? this.config.configuredPages : [this.config.baseUrl];
+    const configured = context.configuredPages.length > 0 ? context.configuredPages : [context.baseUrl];
     return {
+      site: context.host,
       source: "configured",
       pages: configured.slice(start, start + limit).map((url) => ({ url, source: "configured" as const })),
       warnings,
@@ -291,9 +366,11 @@ export class ContentService {
    * Warm the cache by walking the site's discoverable pages, so `search` has
    * something to search. Robots-disallowed and off-host URLs are skipped.
    */
-  public async refresh(limit: number, force = false, offset = 0): Promise<RefreshResult> {
-    const { source, pages, warnings } = await this.listPages(limit, offset);
+  public async refresh(limit: number, force = false, offset = 0, site?: string): Promise<RefreshResult> {
+    const context = this.siteFor(site);
+    const { source, pages, warnings } = await this.listPages(limit, offset, site);
     const result: RefreshResult = {
+      site: context.host,
       source,
       requested: pages.length,
       fetched: 0,
@@ -305,7 +382,7 @@ export class ContentService {
 
     for (const page of pages) {
       try {
-        const url = this.resolveAllowed(page.url);
+        const url = this.resolveAllowed(page.url, site);
         if (!(await this.isRobotsAllowed(url))) {
           result.skipped += 1;
           continue;
@@ -327,23 +404,31 @@ export class ContentService {
       }
     }
 
-    this.completedRefreshAt = new Date().toISOString();
+    this.completedRefreshByHost.set(context.host, new Date().toISOString());
     return result;
   }
 
-  /** Completion time of the latest cache refresh pass, or null before the first pass. */
-  public get lastRefreshAt(): string | null {
-    return this.completedRefreshAt;
+  /** Completion time of the latest cache refresh pass for a site (default: the base site), or null. */
+  public lastRefreshAtFor(site?: string): string | null {
+    return this.completedRefreshByHost.get(this.siteFor(site).host) ?? null;
   }
 
-  public async search(query: string, limit: number): Promise<SearchHit[]> {
+  /** Completion time of the latest cache refresh pass for the base site, or null before the first pass. */
+  public get lastRefreshAt(): string | null {
+    return this.completedRefreshByHost.get(this.baseSite.host) ?? null;
+  }
+
+  public async search(query: string, limit: number, site?: string): Promise<SearchHit[]> {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
+    const context = this.siteFor(site);
     const records = await this.cache.all();
     const hits: SearchHit[] = [];
 
     for (const record of records) {
       if (record.status >= 400) continue;
+      // Results never cross sites: only cached pages of the selected site match.
+      if (!isSameSite(record.url, context.host)) continue;
       if (!record.extracted && !isHtml(record)) continue;
 
       const extracted = await this.extractionOf(record);
@@ -370,6 +455,7 @@ export class ContentService {
       status: "ok",
       baseUrl: this.config.baseUrl,
       allowedHosts: this.config.allowedHosts,
+      siteAllowlist: this.config.siteAllowlist,
       sitemapUrl: this.config.sitemapUrl,
       configuredPages: this.config.configuredPages.length,
       cacheDir: this.config.cacheDir,
@@ -377,7 +463,7 @@ export class ContentService {
       cacheMaxEntries: this.config.cacheMaxEntries,
       cacheEntries: stats.entries,
       cacheBytes: stats.bytes,
-      lastRefreshAt: this.completedRefreshAt,
+      lastRefreshAt: this.lastRefreshAt,
     };
     if (stats.lastFetchAt) status.lastFetchAt = stats.lastFetchAt;
     return status;
@@ -427,6 +513,14 @@ function plainTextExtraction(body: string): ExtractedContent {
     extractionQuality: markdown ? "full" : "empty",
     ...(markdown ? {} : { warnings: ["The text response was empty."] }),
   };
+}
+
+function isSameSite(url: string, host: string): boolean {
+  try {
+    return normalizeHost(new URL(url).host) === host;
+  } catch {
+    return false;
+  }
 }
 
 function toListing(entry: SitemapEntry, source: PageListing["source"]): PageListing {

@@ -9,6 +9,8 @@ export interface FetcherOptions {
   userAgent: string;
   /** Validate every outbound destination, including redirect targets. */
   isUrlAllowed?: (url: string) => boolean;
+  /** Optional extra check applied to each redirect hop, given the previous and next URL. */
+  isRedirectAllowed?: (from: string, to: string) => boolean;
   /** Resolve and validate the network destination before every request. */
   assertUrlAllowed?: (url: string) => Promise<void> | void;
   /** Supply a destination-bound connection pool. The fetcher owns its disposal. */
@@ -37,6 +39,14 @@ function retryDelayMs(retryAfter: string | null): number {
   return DEFAULT_BACKOFF_MS;
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -49,7 +59,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  */
 export class Fetcher {
   private chain: Promise<unknown> = Promise.resolve();
-  private lastStart = 0;
+  /** Start time of the latest request per host, so one site never delays or leaks pacing into another. */
+  private readonly lastStartByHost = new Map<string, number>();
 
   public constructor(private readonly options: FetcherOptions) {}
 
@@ -60,16 +71,16 @@ export class Fetcher {
     await this.options.assertUrlAllowed?.(url);
   }
 
-  private async pace(): Promise<void> {
-    const wait = this.lastStart + this.options.minIntervalMs - Date.now();
+  private async pace(host: string): Promise<void> {
+    const wait = (this.lastStartByHost.get(host) ?? 0) + this.options.minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
-    this.lastStart = Date.now();
+    this.lastStartByHost.set(host, Date.now());
   }
 
   /** Serialize a task behind the rate-limit gate. */
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+  private enqueue<T>(host: string, task: () => Promise<T>): Promise<T> {
     const run = this.chain.then(async () => {
-      await this.pace();
+      await this.pace(host);
       return task();
     });
     // Keep the chain alive even if this task rejects.
@@ -148,6 +159,9 @@ export class Fetcher {
           if (this.options.isUrlAllowed && !this.options.isUrlAllowed(nextUrl)) {
             throw new Error(`Refusing redirect from '${currentUrl}' to a URL outside the configured host allowlist.`);
           }
+          if (this.options.isRedirectAllowed && !this.options.isRedirectAllowed(currentUrl, nextUrl)) {
+            throw new Error(`Refusing redirect from '${currentUrl}' to a different site.`);
+          }
           currentUrl = nextUrl;
           // Validators describe the original representation and must not be
           // forwarded to a different URL.
@@ -182,7 +196,7 @@ export class Fetcher {
   }
 
   public fetch(url: string, conditional: ConditionalHeaders = {}): Promise<FetchRecord> {
-    return this.enqueue(async () => {
+    return this.enqueue(hostOf(url), async () => {
       let attempt = 0;
       for (;;) {
         const { record, retryAfter } = await this.fetchOnce(url, conditional);

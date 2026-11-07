@@ -15,6 +15,13 @@ export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: F
     maxBytes: config.fetchMaxBytes,
     maxRetries: config.fetchMaxRetries,
     userAgent: config.userAgent,
+    isRedirectAllowed: (from, to) => {
+      try {
+        return normalizeHost(new URL(from).host) === normalizeHost(new URL(to).host);
+      } catch {
+        return false;
+      }
+    },
     isUrlAllowed: (rawUrl) => {
       try {
         const url = new URL(rawUrl);
