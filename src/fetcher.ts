@@ -92,7 +92,7 @@ export class Fetcher {
    * Read a response body, stopping hard at `maxBytes` so one oversized page
    * cannot exhaust memory or fill the cache.
    */
-  private async readBody(response: Response): Promise<{ body: string; truncated: boolean }> {
+  private async readBody(response: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {
     if (!response.body) return { body: "", truncated: false };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -106,8 +106,8 @@ export class Fetcher {
         if (done) break;
         if (!value) continue;
         let chunk = value;
-        if (bytes + chunk.byteLength > this.options.maxBytes) {
-          chunk = chunk.subarray(0, Math.max(0, this.options.maxBytes - bytes));
+        if (bytes + chunk.byteLength > maxBytes) {
+          chunk = chunk.subarray(0, Math.max(0, maxBytes - bytes));
           truncated = true;
         }
         bytes += chunk.byteLength;
@@ -125,6 +125,7 @@ export class Fetcher {
   private async fetchOnce(
     url: string,
     conditional: ConditionalHeaders,
+    maxBytes: number,
   ): Promise<{ record: FetchRecord; retryAfter: string | null }> {
     let currentUrl = url;
     let currentConditional = conditional;
@@ -172,7 +173,7 @@ export class Fetcher {
         // A 304 carries no body; the caller reuses its cached copy.
         const { body, truncated } = response.status === 304
           ? { body: "", truncated: false }
-          : await this.readBody(response);
+          : await this.readBody(response, maxBytes);
 
         const record: FetchRecord = { url, status: response.status, body, fetchedAt: new Date().toISOString() };
         if (currentUrl !== url) record.finalUrl = currentUrl;
@@ -195,11 +196,16 @@ export class Fetcher {
     throw new Error(`Too many redirects while fetching '${url}'.`);
   }
 
-  public fetch(url: string, conditional: ConditionalHeaders = {}): Promise<FetchRecord> {
+  /**
+   * Fetch a URL. `limits.maxBytes` can lower, never raise, the configured body
+   * cap for one call, such as a bulk health check that wants small pages.
+   */
+  public fetch(url: string, conditional: ConditionalHeaders = {}, limits: { maxBytes?: number } = {}): Promise<FetchRecord> {
+    const maxBytes = Math.min(this.options.maxBytes, limits.maxBytes ?? this.options.maxBytes);
     return this.enqueue(hostOf(url), async () => {
       let attempt = 0;
       for (;;) {
-        const { record, retryAfter } = await this.fetchOnce(url, conditional);
+        const { record, retryAfter } = await this.fetchOnce(url, conditional, maxBytes);
         if (!RETRYABLE_STATUSES.has(record.status) || attempt >= this.options.maxRetries) return record;
         attempt += 1;
         await sleep(retryDelayMs(retryAfter));

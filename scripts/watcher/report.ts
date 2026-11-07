@@ -4,7 +4,7 @@ import type { LineDiff } from "../../src/diff.js";
 import type { FactChange } from "./deltas.js";
 import type { WatchEntry } from "./watchlist.js";
 
-export type EntryStatus = "baselined" | "unchanged" | "changed" | "removed" | "restored" | "error";
+export type EntryStatus = "baselined" | "unchanged" | "changed" | "removed" | "restored" | "error" | "unavailable";
 
 export interface EntryResult {
   entry: WatchEntry;
@@ -37,7 +37,16 @@ export function materialChanges(results: EntryResult[]): MaterialChange[] {
 
 /** Inline text from a web page or watchlist, made safe for a Markdown line. */
 export function inline(text: string): string {
-  return text.replace(/[\r\n]+/gu, " ").replace(/`/gu, "'").replace(/[|<>[\]]/gu, (character) => `\\${character}`).trim();
+  return text
+    .replace(/[\r\n]+/gu, " ")
+    .replace(/`/gu, "'")
+    // Obsidian comments, tags and maths must not be created by page text.
+    .replace(/%%+/gu, "%")
+    .replace(/#(?=[\p{L}\p{N}_/-])/gu, "\\#")
+    .replace(/\$/gu, "\\$")
+    .replace(/＠/gu, "@")
+    .replace(/[|<>[\]]/gu, (character) => `\\${character}`)
+    .trim();
 }
 
 /** A fenced block that page text cannot close early. */
@@ -63,7 +72,7 @@ export interface RenderOptions {
 export function renderReport(results: EntryResult[], options: RenderOptions): string {
   const changed = results.filter(isReportable);
   const baselined = results.filter((result) => result.status === "baselined").length;
-  const errors = results.filter((result) => result.status === "error").length;
+  const errors = results.filter((result) => result.status === "error" || result.status === "unavailable").length;
   const sources = changed.map((result) => result.entry.url);
   const material = materialChanges(results);
 

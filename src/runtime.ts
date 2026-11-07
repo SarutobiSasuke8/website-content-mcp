@@ -8,6 +8,18 @@ import { SnapshotStore } from "./snapshots.js";
 import type { AppConfig } from "./config.js";
 import type { FetcherOptions } from "./fetcher.js";
 
+/** Whether a redirect hop stays on the same site and never drops from https to http. */
+export function redirectAllowed(from: string, to: string): boolean {
+  try {
+    const source = new URL(from);
+    const target = new URL(to);
+    if (source.protocol === "https:" && target.protocol === "http:") return false;
+    return normalizeHost(source.host) === normalizeHost(target.host);
+  } catch {
+    return false;
+  }
+}
+
 export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: Fetcher; service: ContentService; snapshots: SnapshotStore | undefined } {
   const cache = new DiskCache(config.cacheDir, config.cacheTtlSeconds, config.cacheMaxEntries);
   const fetcherOptions: FetcherOptions = {
@@ -16,13 +28,7 @@ export function createRuntime(config: AppConfig): { cache: DiskCache; fetcher: F
     maxBytes: config.fetchMaxBytes,
     maxRetries: config.fetchMaxRetries,
     userAgent: config.userAgent,
-    isRedirectAllowed: (from, to) => {
-      try {
-        return normalizeHost(new URL(from).host) === normalizeHost(new URL(to).host);
-      } catch {
-        return false;
-      }
-    },
+    isRedirectAllowed: redirectAllowed,
     isUrlAllowed: (rawUrl) => {
       try {
         const url = new URL(rawUrl);

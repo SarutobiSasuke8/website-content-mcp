@@ -36,6 +36,8 @@ export interface WatcherOptions {
   /** Permit fetching hosts that resolve to private addresses. For local test sites only. */
   allowPrivateNetwork?: boolean;
   userAgent?: string;
+  /** Pause before re-checking a page that answered 404 or 410. Defaults to 3000. */
+  missingRetryDelayMs?: number;
 }
 
 export interface RunResult {
@@ -45,6 +47,8 @@ export interface RunResult {
   baselined: number;
   unchanged: number;
   errors: number;
+  /** Pages that could not be observed this time (5xx, 429, timeouts, blocked). Nothing was stored for them. */
+  unavailable: number;
   /** Markdown for the run when at least one page changed. */
   reportMarkdown?: string;
   /** Path of the report written, when not a dry run. */
@@ -62,7 +66,7 @@ export function watchKey(entry: WatchEntry): string {
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 function watchKeyHash(page: WatchedPage): string {
-  if (page.status >= 400) return "gone";
+  if (page.availability === "missing") return "gone";
   return sha256(`${normalizeForWatch(page.markdown)}\n#facts\n${JSON.stringify(factsForComparison(page.facts))}`);
 }
 
@@ -175,9 +179,15 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       try {
         const page = await service.watchPage(entry.url, {
           site: entry.site,
+          ...(options.missingRetryDelayMs !== undefined ? { missingRetryDelayMs: options.missingRetryDelayMs } : {}),
           ...(entry.selector ? { selector: entry.selector } : {}),
           ...(entry.section ? { section: entry.section } : {}),
         });
+        if (page.availability === "unavailable") {
+          // Not an observation: no baseline is touched and nothing material is raised.
+          results.push({ entry, status: "unavailable", warnings: [...page.warnings], factChanges: [], ...(page.unavailableReason ? { error: page.unavailableReason } : {}) });
+          continue;
+        }
         const observation = {
           markdown: page.markdown,
           contentHash: page.contentHash,
@@ -214,6 +224,7 @@ export async function runWatcher(options: WatcherOptions): Promise<RunResult> {
       baselined: results.filter((result) => result.status === "baselined").length,
       unchanged: results.filter((result) => result.status === "unchanged").length,
       errors: results.filter((result) => result.status === "error").length,
+      unavailable: results.filter((result) => result.status === "unavailable").length,
       dryRun,
       written: [...new Set(written)],
     };

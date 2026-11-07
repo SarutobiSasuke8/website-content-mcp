@@ -47,17 +47,17 @@ Exit codes:
   3  nothing changed but at least one page could not be checked
 `;
 
-export function exitCodeFor(result: Pick<RunResult, "changed" | "errors">): number {
+export function exitCodeFor(result: Pick<RunResult, "changed" | "errors"> & { unavailable?: number }): number {
   if (result.changed > 0) return EXIT.CHANGED;
-  if (result.errors > 0) return EXIT.ERRORS;
+  if (result.errors > 0 || (result.unavailable ?? 0) > 0) return EXIT.ERRORS;
   return EXIT.OK;
 }
 
 export function describeRun(result: RunResult): string[] {
   const lines: string[] = [];
   for (const entry of result.results) {
-    const note = entry.status === "error"
-      ? `error: ${entry.error ?? "unknown"}`
+    const note = entry.status === "error" || entry.status === "unavailable"
+      ? `${entry.status}: ${entry.error ?? "unknown"}`
       : entry.noiseOnly
         ? "unchanged (date stamps or spacing only)"
         : entry.status;
@@ -121,7 +121,7 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     }
     const watched = result.results.length;
     io.out(
-      `${result.dryRun ? "[dry run] " : ""}${watched} watched: ${result.changed} changed, ${result.baselined} baselined, ${result.unchanged} unchanged, ${result.errors} errors.${result.reportPath ? ` Report: ${result.reportPath}` : ""}`,
+      `${result.dryRun ? "[dry run] " : ""}${watched} watched: ${result.changed} changed, ${result.baselined} baselined, ${result.unchanged} unchanged, ${result.errors} errors, ${result.unavailable} unavailable.${result.reportPath ? ` Report: ${result.reportPath}` : ""}`,
     );
     for (const entry of result.results) {
       if (entry.status === "error") io.err(`Could not check ${entry.entry.url}: ${entry.error ?? "unknown error"}`);

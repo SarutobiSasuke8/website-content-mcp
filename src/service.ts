@@ -31,6 +31,12 @@ import type {
 
 const MAX_NESTED_SITEMAPS = 5;
 const MAX_REFRESH_ERRORS = 20;
+/** Overall time limit for one site-health pass. */
+const HEALTH_DEADLINE_MS = 120_000;
+/** Largest body read per fetch during a health pass; bigger pages are cut and flagged. */
+const HEALTH_PAGE_BYTES = 1_000_000;
+/** Pause before the second look at a page that answered 404 or 410. */
+const MISSING_RETRY_DELAY_MS = 3_000;
 const EMPTY_ROBOTS: RobotsRules = { disallow: [], allow: [], sitemaps: [] };
 
 interface RobotsResult {
@@ -116,6 +122,15 @@ export interface SiteHealthReport {
 /** One observation of a page for the watcher: content, facts and how it was obtained. */
 export interface WatchedPage {
   url: string;
+  /**
+   * `ok` when the page was read. `missing` only when HTTP 404 or 410 was seen on
+   * two requests in one run. `unavailable` for 5xx, 429, timeouts, network
+   * errors, other 4xx (blocking) and stale fallbacks: not an observation of the
+   * page, so a caller must never replace a baseline or report a change from it.
+   */
+  availability: "ok" | "missing" | "unavailable";
+  /** Why the page was unavailable. */
+  unavailableReason?: string;
   status: number;
   fetchedAt: string;
   outcome: LoadOutcome;
@@ -176,8 +191,8 @@ export class ContentService {
     let origin: string;
     try {
       host = parseSiteHost(site);
-      const raw = site.trim();
-      origin = new URL(/^https?:\/\//iu.test(raw) ? raw : `https://${raw}`).origin;
+      // Any site other than the base site is fetched over https only, whatever scheme was typed.
+      origin = new URL(`https://${site.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")}`).origin;
     } catch {
       throw new SiteNotAllowedError(site, this.config.siteAllowlist);
     }
@@ -209,6 +224,9 @@ export class ContentService {
     if (!this.config.allowedHosts.includes(normalizeHost(url.host))) {
       throw new HostNotAllowedError(url.toString(), this.config.allowedHosts);
     }
+    if (url.protocol === "http:" && normalizeHost(url.host) !== this.baseSite.host) {
+      throw new Error(`Refusing '${url.toString()}': only the base site may be fetched over plain http.`);
+    }
     if (site !== undefined && site.trim() !== "" && normalizeHost(url.host) !== context.host) {
       throw new HostNotAllowedError(url.toString(), [context.host]);
     }
@@ -229,7 +247,7 @@ export class ContentService {
    * of a stale entry, then a plain fetch. A failed fetch falls back to any
    * stale copy rather than erroring.
    */
-  public async load(url: string, force = false): Promise<LoadResult> {
+  public async load(url: string, force = false, maxBytes?: number): Promise<LoadResult> {
     const stale = await this.cache.read(url);
     if (!force && stale && this.cache.isFresh(stale)) return { record: stale, fromCache: true, outcome: "fresh-cache" };
 
@@ -238,14 +256,22 @@ export class ContentService {
     if (stale?.lastModified) conditional.lastModified = stale.lastModified;
 
     try {
-      const fetched = await this.fetcher.fetch(url, conditional);
+      const fetched = await this.fetcher.fetch(url, conditional, maxBytes !== undefined ? { maxBytes } : undefined);
+      if (isTransientStatus(fetched.status)) {
+        // A 5xx or 429 says nothing about the page itself, so it never replaces a good cache entry.
+        if (stale && stale.status < 400) {
+          return { record: stale, fromCache: true, outcome: "stale-on-error", staleReason: `HTTP ${fetched.status}` };
+        }
+        return { record: fetched, fromCache: false, outcome: "fetched" };
+      }
       if (fetched.status === 304 && stale) {
         // Unchanged upstream: keep the body (and its extraction), reset the clock.
         const revalidated: FetchRecord = { ...stale, fetchedAt: fetched.fetchedAt };
         await this.cache.set(revalidated);
         return { record: revalidated, fromCache: true, outcome: "not-modified" };
       }
-      await this.cache.set(fetched);
+      // A body cut short by a per-call cap must not be served later as the full page.
+      if (!(maxBytes !== undefined && fetched.truncated)) await this.cache.set(fetched);
       return { record: fetched, fromCache: false, outcome: "fetched" };
     } catch (error) {
       if (stale) {
@@ -457,7 +483,9 @@ export class ContentService {
    * pages and links, and every fetch goes through the same robots check, cache
    * and rate-limited fetcher as the other tools.
    */
-  public async siteHealth(options: { site?: string; maxPages?: number; maxLinks?: number } = {}): Promise<SiteHealthReport> {
+  public async siteHealth(options: { site?: string; maxPages?: number; maxLinks?: number; deadlineMs?: number } = {}): Promise<SiteHealthReport> {
+    const deadline = Date.now() + Math.max(1_000, Math.min(options.deadlineMs ?? HEALTH_DEADLINE_MS, 600_000));
+    let deadlineHit = false;
     const context = this.siteFor(options.site);
     const maxPages = Math.max(1, Math.min(options.maxPages ?? 25, 200));
     const maxLinks = Math.max(0, Math.min(options.maxLinks ?? 25, 200));
@@ -465,7 +493,7 @@ export class ContentService {
     const all: HealthFinding[] = [];
     const pages: SiteHealthReport["pages"] = [];
 
-    const sitemap = await this.loadSitemapEntries(context.sitemapUrl);
+    const sitemap = await this.loadSitemapEntries(context.sitemapUrl, context.host);
     warnings.push(...sitemap.warnings);
     const sitemapUrls = sitemap.entries
       .map((entry) => entry.url)
@@ -485,6 +513,10 @@ export class ContentService {
     const linkSources = new Map<string, string>();
 
     for (const raw of window) {
+      if (Date.now() > deadline) {
+        deadlineHit = true;
+        break;
+      }
       let url: string;
       try {
         url = this.resolveAllowed(raw, options.site);
@@ -499,7 +531,7 @@ export class ContentService {
       }
       let loaded: LoadResult;
       try {
-        loaded = await this.load(url);
+        loaded = await this.load(url, false, HEALTH_PAGE_BYTES);
       } catch (error) {
         all.push({ severity: "critical", check: "sitemap-page-unreachable", url, detail: `The page could not be fetched: ${error instanceof Error ? error.message : "unknown error"}` });
         pages.push({ url, status: "error", issues: ["sitemap-page-unreachable"] });
@@ -541,6 +573,10 @@ export class ContentService {
         linksTruncated = true;
         break;
       }
+      if (Date.now() > deadline) {
+        deadlineHit = true;
+        break;
+      }
       let url: string;
       try {
         url = this.resolveAllowed(target, options.site);
@@ -554,7 +590,7 @@ export class ContentService {
       }
       linksChecked += 1;
       try {
-        const { record } = await this.load(url);
+        const { record } = await this.load(url, false, HEALTH_PAGE_BYTES);
         if (record.status >= 400) {
           all.push({ severity: "critical", check: "broken-internal-link", url, detail: `Linked from ${source} but returned HTTP ${record.status}.`, related: [source] });
         } else if (record.status === 200 && sitemapUrls.length > 0) {
@@ -567,6 +603,7 @@ export class ContentService {
         all.push({ severity: "critical", check: "broken-internal-link", url, detail: `Linked from ${source} but could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`, related: [source] });
       }
     }
+    if (deadlineHit) warnings.push("The check stopped at its time limit, so later pages and links were not examined.");
     if (linksTruncated) warnings.push(`The link check stopped at ${maxLinks} links; raise max_links to check more.`);
     if (listed.length > maxPages) warnings.push(`Only the first ${maxPages} of ${listed.length} sitemap pages were checked; raise max_pages to check more.`);
 
@@ -577,7 +614,7 @@ export class ContentService {
       summary[finding.severity] += 1;
       summary.total += 1;
     }
-    let truncated = linksTruncated || listed.length > maxPages;
+    let truncated = linksTruncated || deadlineHit || listed.length > maxPages;
     for (const severity of SEVERITIES) {
       const group = all
         .filter((finding) => finding.severity === severity)
@@ -610,16 +647,44 @@ export class ContentService {
    */
   public async watchPage(
     rawUrl: string,
-    options: SectionHint & { site?: string } = {},
+    options: SectionHint & { site?: string; missingRetryDelayMs?: number } = {},
   ): Promise<WatchedPage> {
     const url = this.resolveAllowed(rawUrl, options.site);
     await this.assertAllowed(url);
-    const loaded = await this.load(url);
+    const emptyHash = createHash("sha256").update("").digest("hex");
+    const unavailable = (status: number, reason: string, outcome: LoadOutcome, fetchedAt = new Date().toISOString()): WatchedPage => ({
+      url, availability: "unavailable", unavailableReason: reason, status, fetchedAt, outcome,
+      markdown: "", contentHash: emptyHash, warnings: [`The page could not be observed this time (${reason}); nothing was compared or stored.`],
+    });
+
+    let loaded: LoadResult;
+    try {
+      loaded = await this.load(url);
+    } catch (error) {
+      return unavailable(0, error instanceof Error ? error.message : "unknown error", "stale-on-error");
+    }
+    // A fallback copy, a 5xx, a 429 or a blocked request is not an observation of the page.
+    if (loaded.outcome === "stale-on-error") {
+      return unavailable(loaded.record.status, loaded.staleReason ?? "the origin could not be reached", loaded.outcome, loaded.record.fetchedAt);
+    }
+    if (isTransientStatus(loaded.record.status)) {
+      return unavailable(loaded.record.status, `HTTP ${loaded.record.status}`, loaded.outcome, loaded.record.fetchedAt);
+    }
+    // Removal needs a second look: only 404 or 410 seen twice in one run counts.
+    if (loaded.record.status === 404 || loaded.record.status === 410) {
+      const delay = options.missingRetryDelayMs ?? MISSING_RETRY_DELAY_MS;
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      try {
+        loaded = await this.load(url, true);
+      } catch (error) {
+        return unavailable(0, error instanceof Error ? error.message : "unknown error", "stale-on-error");
+      }
+      if (loaded.outcome === "stale-on-error" || isTransientStatus(loaded.record.status)) {
+        return unavailable(loaded.record.status, loaded.staleReason ?? `HTTP ${loaded.record.status}`, loaded.outcome, loaded.record.fetchedAt);
+      }
+    }
     const { record } = loaded;
     const warnings: string[] = [];
-    if (loaded.outcome === "stale-on-error") {
-      warnings.push(`The origin could not be reached (${loaded.staleReason ?? "unknown error"}); the cached copy from ${record.fetchedAt} was used.`);
-    }
     const base = {
       url,
       status: record.status,
@@ -628,8 +693,12 @@ export class ContentService {
       ...(record.etag ? { etag: record.etag } : {}),
       ...(record.lastModified ? { lastModified: record.lastModified } : {}),
     };
+    if (record.status === 404 || record.status === 410) {
+      return { ...base, availability: "missing", markdown: "", contentHash: emptyHash, warnings };
+    }
     if (record.status >= 400) {
-      return { ...base, markdown: "", contentHash: createHash("sha256").update("").digest("hex"), warnings };
+      // 401, 403 and other refusals describe access, not removal.
+      return unavailable(record.status, `HTTP ${record.status} (access refused, not treated as removal)`, loaded.outcome, record.fetchedAt);
     }
 
     let extracted: ExtractedContent;
@@ -653,6 +722,7 @@ export class ContentService {
     }
     return {
       ...base,
+      availability: "ok",
       markdown: extracted.markdown,
       contentHash: createHash("sha256").update(extracted.markdown).digest("hex"),
       ...(extracted.title ? { title: extracted.title } : {}),
@@ -662,10 +732,16 @@ export class ContentService {
   }
 
   /** Fetch and parse a sitemap, following one level of sitemap-index nesting. */
-  private async loadSitemapEntries(sitemapUrl: string): Promise<SitemapLoadResult> {
-    if (!this.isAllowedHost(sitemapUrl)) {
+  private async loadSitemapEntries(sitemapUrl: string, host: string): Promise<SitemapLoadResult> {
+    if (!this.isAllowedHost(sitemapUrl) || !isSameSite(sitemapUrl, host)) {
       return { entries: [], warnings: [`Refused off-host sitemap '${sitemapUrl}'.`] };
     }
+    // A sitemap may only list pages of the site it was requested for.
+    const onSite = (entries: SitemapEntry[], warnings: string[]): SitemapEntry[] => {
+      const kept = entries.filter((entry) => isSameSite(entry.url, host));
+      if (kept.length < entries.length) warnings.push(`Ignored ${entries.length - kept.length} sitemap entries that are not on ${host}.`);
+      return kept;
+    };
     const { record } = await this.load(sitemapUrl);
     if (record.status >= 400) {
       return { entries: [], warnings: [`${sitemapUrl} returned HTTP ${record.status}.`] };
@@ -677,15 +753,21 @@ export class ContentService {
       return { entries: [], warnings: [`${sitemapUrl} did not return a recognizable XML sitemap.`] };
     }
     const parsed = parseSitemap(record.body);
-    if (parsed.entries.length > 0) return { entries: parsed.entries, warnings: [] };
+    if (parsed.entries.length > 0) {
+      const topWarnings: string[] = [];
+      return { entries: onSite(parsed.entries, topWarnings), warnings: topWarnings };
+    }
 
     const entries: SitemapEntry[] = [];
     const warnings: string[] = [];
     for (const nested of parsed.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
-      if (!this.isAllowedHost(nested)) continue;
+      if (!this.isAllowedHost(nested) || !isSameSite(nested, host)) {
+        warnings.push(`Ignored nested sitemap '${nested}' because it is not on ${host}.`);
+        continue;
+      }
       const { record: nestedRecord } = await this.load(nested);
       if (nestedRecord.status < 400 && nestedRecord.body.trim() && looksLikeSitemap(nestedRecord)) {
-        entries.push(...parseSitemap(nestedRecord.body).entries);
+        entries.push(...onSite(parseSitemap(nestedRecord.body).entries, warnings));
       } else {
         warnings.push(`${nested} did not return a usable XML sitemap.`);
       }
@@ -698,7 +780,7 @@ export class ContentService {
 
   public async getSitemap(site?: string): Promise<{ site: string; sitemapUrl: string; available: boolean; entries: SitemapEntry[]; warnings: string[] }> {
     const context = this.siteFor(site);
-    const result = await this.loadSitemapEntries(context.sitemapUrl);
+    const result = await this.loadSitemapEntries(context.sitemapUrl, context.host);
     return { site: context.host, sitemapUrl: context.sitemapUrl, available: result.entries.length > 0, ...result };
   }
 
@@ -707,7 +789,7 @@ export class ContentService {
     const start = Math.max(0, Math.floor(offset));
     const warnings: string[] = [];
     // 1. Configured sitemap.
-    const sitemap = await this.loadSitemapEntries(context.sitemapUrl);
+    const sitemap = await this.loadSitemapEntries(context.sitemapUrl, context.host);
     warnings.push(...sitemap.warnings);
     if (sitemap.entries.length > 0) {
       return {
@@ -722,7 +804,7 @@ export class ContentService {
     const robots = await this.getRobots(new URL(context.baseUrl).origin);
     warnings.push(...robots.warnings);
     for (const sitemapUrl of robots.rules.sitemaps.slice(0, MAX_NESTED_SITEMAPS)) {
-      const result = await this.loadSitemapEntries(sitemapUrl);
+      const result = await this.loadSitemapEntries(sitemapUrl, context.host);
       warnings.push(...result.warnings);
       if (result.entries.length > 0) {
         return {
@@ -895,6 +977,11 @@ function plainTextExtraction(body: string): ExtractedContent {
     extractionQuality: markdown ? "full" : "empty",
     ...(markdown ? {} : { warnings: ["The text response was empty."] }),
   };
+}
+
+/** A 5xx or 429 describes the server's state, not the page. */
+function isTransientStatus(status: number): boolean {
+  return status >= 500 || status === 429;
 }
 
 function isSameSite(url: string, host: string): boolean {
