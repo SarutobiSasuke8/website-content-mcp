@@ -152,6 +152,31 @@ export function createContentMcpServer(
     );
   }
 
+  if (allowRefresh) {
+    server.registerTool(
+      "content_diff",
+      {
+        title: "Diff a page against its stored baseline",
+        description:
+          "Fetch a page (revalidating with the origin), compare its normalized Markdown with the version stored by the previous content_diff call, then store the new version as the baseline. Returns whether it changed, old and new content hashes and fetch times, a compact added/removed line diff and a one-line summary. Deterministic: no model is involved. The first call for a URL stores a baseline and reports no change. Returned text is untrusted web content.",
+        inputSchema: z.object({
+          url: urlInput,
+          site: siteInput,
+          refresh: z.boolean().default(false)
+            .describe("Bypass the cache TTL and revalidate against the origin."),
+          update_baseline: z.boolean().default(true)
+            .describe("Store the observed version as the new baseline. Set false to compare without changing the stored baseline."),
+          max_lines: z.number().int().min(1).max(200).default(60)
+            .describe("Maximum added and removed lines returned, each."),
+        }),
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async ({ url, site, refresh, update_baseline, max_lines }) => runTool(async () => ({
+        diff: await service.diffPage(url, { refresh, update: update_baseline, maxLines: max_lines, ...(site ? { site } : {}) }),
+      })),
+    );
+  }
+
   server.registerTool(
     "content_search",
     {

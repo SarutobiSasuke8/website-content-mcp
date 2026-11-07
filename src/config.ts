@@ -17,6 +17,10 @@ const envSchema = z.object({
   SITE_ALLOWED_HOSTS: z.string().optional(),
   SITE_ALLOWLIST: z.string().optional(),
   CACHE_DIR: z.string().default(".cache"),
+  SNAPSHOT_DIR: z.string().optional(),
+  SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().min(1).max(3_650).default(90),
+  SNAPSHOT_MAX_ENTRIES: z.coerce.number().int().min(0).max(100_000).default(1_000),
+  SNAPSHOT_MAX_MARKDOWN_CHARS: z.coerce.number().int().min(1_000).max(5_000_000).default(200_000),
   CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(2_592_000).default(3_600),
   CACHE_MAX_ENTRIES: z.coerce.number().int().min(0).max(100_000).default(500),
   FETCH_TIMEOUT_MS: z.coerce.number().int().min(500).max(120_000).default(10_000),
@@ -53,6 +57,14 @@ export interface AppConfig {
   sitemapUrl: string;
   configuredPages: string[];
   cacheDir: string;
+  /** Where previous page versions are kept for `content_diff`. */
+  snapshotDir: string;
+  /** Versions and idle entries older than this many days are removed. */
+  snapshotRetentionDays: number;
+  /** Maximum stored URLs; zero disables snapshots and `content_diff`. */
+  snapshotMaxEntries: number;
+  /** Maximum Markdown characters stored per version. */
+  snapshotMaxMarkdownChars: number;
   cacheTtlSeconds: number;
   cacheMaxEntries: number;
   fetchTimeoutMs: number;
@@ -139,6 +151,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sitemapUrl,
     configuredPages,
     cacheDir: path.resolve(parsed.CACHE_DIR),
+    snapshotDir: path.resolve(parsed.SNAPSHOT_DIR ?? path.join(parsed.CACHE_DIR, "snapshots")),
+    snapshotRetentionDays: parsed.SNAPSHOT_RETENTION_DAYS,
+    snapshotMaxEntries: parsed.SNAPSHOT_MAX_ENTRIES,
+    snapshotMaxMarkdownChars: parsed.SNAPSHOT_MAX_MARKDOWN_CHARS,
     cacheTtlSeconds: parsed.CACHE_TTL_SECONDS,
     cacheMaxEntries: parsed.CACHE_MAX_ENTRIES,
     fetchTimeoutMs: parsed.FETCH_TIMEOUT_MS,

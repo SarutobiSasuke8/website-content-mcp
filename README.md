@@ -175,6 +175,10 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `CACHE_DIR` | | `.cache` | Disk cache directory. |
 | `CACHE_TTL_SECONDS` | | `3600` | Cache TTL (0 disables caching). |
 | `CACHE_MAX_ENTRIES` | | `500` | Cache size bound, evicting oldest-first (0 = unbounded). |
+| `SNAPSHOT_DIR` | | `<CACHE_DIR>/snapshots` | Where `content_diff` keeps the current and previous normalized Markdown per URL. |
+| `SNAPSHOT_RETENTION_DAYS` | | `90` | Previous versions and entries not compared for this long are removed. |
+| `SNAPSHOT_MAX_ENTRIES` | | `1000` | Maximum stored URLs, removing the least recently compared first. `0` disables snapshots. |
+| `SNAPSHOT_MAX_MARKDOWN_CHARS` | | `200000` | Maximum Markdown characters stored per version. The hash always covers the full text. |
 | `FETCH_TIMEOUT_MS` | | `10000` | Per-request timeout. |
 | `FETCH_MIN_INTERVAL_MS` | | `1000` | Minimum spacing between fetches (~1 req/sec). |
 | `FETCH_MAX_BYTES` | | `5000000` | Hard cap on a single response body. |

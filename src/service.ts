@@ -3,9 +3,12 @@ import { createHash } from "node:crypto";
 import { normalizeHost, parseSiteHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
+import { diffLines, summarizeDiff } from "./diff.js";
 import { parseSitemap } from "./sitemap.js";
 
 import type { DiskCache } from "./cache.js";
+import type { LineDiff } from "./diff.js";
+import type { SnapshotStore } from "./snapshots.js";
 import type { AppConfig } from "./config.js";
 import type { ConditionalHeaders, Fetcher } from "./fetcher.js";
 import type { RobotsRules } from "./robots.js";
@@ -67,6 +70,24 @@ export interface LoadResult {
   staleReason?: string;
 }
 
+/** Result of comparing a page with its stored baseline. */
+export interface PageDiff {
+  url: string;
+  finalUrl?: string;
+  status: "first-seen" | "unchanged" | "changed";
+  changed: boolean;
+  /** How the current copy was obtained. */
+  freshness: LoadOutcome;
+  /** Whether this call stored the observed version as the new baseline. */
+  baselineStored: boolean;
+  old?: { contentHash: string; fetchedAt: string; title?: string };
+  new: { contentHash: string; fetchedAt: string; title?: string };
+  diff?: LineDiff;
+  summary: string;
+  warnings?: string[];
+  sourceTrust: "untrusted-web-content";
+}
+
 export class HostNotAllowedError extends Error {
   public constructor(url: string, allowedHosts: string[]) {
     super(`Refusing to fetch '${url}': host is not in the allowed list (${allowedHosts.join(", ")}).`);
@@ -88,6 +109,7 @@ export class ContentService {
     private readonly config: AppConfig,
     private readonly cache: DiskCache,
     private readonly fetcher: Fetcher,
+    private readonly snapshots?: SnapshotStore,
   ) {
     this.baseSite = {
       host: normalizeHost(new URL(config.baseUrl).host),
@@ -277,6 +299,87 @@ export class ContentService {
     if (extracted.products) content.products = extracted.products;
     if (extracted.warnings) content.warnings = extracted.warnings;
     return content;
+  }
+
+  /**
+   * Compare the page with the baseline stored by the previous comparison, then
+   * store the new version as the baseline. First sight stores a baseline and
+   * reports no change; a 304 or a stale-on-error fallback is stated explicitly.
+   */
+  public async diffPage(
+    rawUrl: string,
+    options: { refresh?: boolean; site?: string; maxLines?: number; update?: boolean } = {},
+  ): Promise<PageDiff> {
+    if (!this.snapshots) throw new Error("Change snapshots are disabled (SNAPSHOT_MAX_ENTRIES=0).");
+    const url = this.resolveAllowed(rawUrl, options.site);
+    await this.assertAllowed(url);
+    const loaded = await this.load(url, options.refresh ?? false);
+    const { record } = loaded;
+    if (record.status >= 400) throw new Error(`Fetch failed for '${url}' with HTTP ${record.status}.`);
+
+    const extracted = await this.extractionOf(record);
+    const markdown = extracted.markdown;
+    const contentHash = createHash("sha256").update(markdown).digest("hex");
+    const warnings: string[] = [];
+    if (extracted.extractionQuality !== "full") {
+      warnings.push(`Extraction quality is '${extracted.extractionQuality}', so a comparison covers only what the server could read.`);
+    }
+    if (loaded.outcome === "stale-on-error") {
+      warnings.push(`The origin could not be reached (${loaded.staleReason ?? "unknown error"}); this comparison uses the cached copy fetched at ${record.fetchedAt}.`);
+    }
+
+    const observation = {
+      markdown,
+      contentHash,
+      fetchedAt: record.fetchedAt,
+      ...(record.etag ? { etag: record.etag } : {}),
+      ...(record.lastModified ? { lastModified: record.lastModified } : {}),
+      ...(extracted.title ? { title: extracted.title } : {}),
+      status: record.status,
+    };
+    // Never promote a copy served because the origin failed to a new baseline.
+    const store = options.update !== false && loaded.outcome !== "stale-on-error";
+    const comparison = store
+      ? await this.snapshots.record(url, observation)
+      : await this.snapshots.compare(url, observation);
+
+    const result: PageDiff = {
+      url,
+      status: comparison.status,
+      changed: comparison.status === "changed",
+      freshness: loaded.outcome,
+      baselineStored: store && comparison.status !== "unchanged",
+      new: { contentHash, fetchedAt: record.fetchedAt, ...(extracted.title ? { title: extracted.title } : {}) },
+      summary: "",
+      sourceTrust: "untrusted-web-content",
+    };
+    if (record.finalUrl) result.finalUrl = record.finalUrl;
+    const baseline = comparison.baseline;
+    if (baseline) {
+      result.old = {
+        contentHash: baseline.contentHash,
+        fetchedAt: baseline.fetchedAt,
+        ...(baseline.title ? { title: baseline.title } : {}),
+      };
+    }
+
+    const validation = loaded.outcome === "not-modified" ? " The origin answered 304 Not Modified." : "";
+    if (comparison.status === "first-seen") {
+      result.summary = store
+        ? `First time this page has been seen; its content was stored as the baseline for later comparisons.${validation}`
+        : "First time this page has been seen, and no baseline was stored.";
+    } else if (comparison.status === "unchanged") {
+      result.summary = `The page content is unchanged since ${baseline?.fetchedAt ?? "the baseline"}.${validation}`;
+    } else if (baseline) {
+      const diff = diffLines(baseline.markdown, markdown, options.maxLines !== undefined ? { maxLines: options.maxLines } : {});
+      result.diff = diff;
+      result.summary = `The page changed since ${baseline.fetchedAt}. ${summarizeDiff(diff, baseline.title, extracted.title)}${validation}`;
+      if (baseline.storedTruncated || comparison.observed.storedTruncated) {
+        warnings.push("The stored text was clipped to the snapshot size bound, so the line diff covers only the beginning of the page.");
+      }
+    }
+    if (warnings.length > 0) result.warnings = warnings;
+    return result;
   }
 
   /** Fetch and parse a sitemap, following one level of sitemap-index nesting. */
