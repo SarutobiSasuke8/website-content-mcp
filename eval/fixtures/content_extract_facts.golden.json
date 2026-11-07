@@ -1,0 +1,31 @@
+{
+  "page": {
+    "facts": {
+      "outline": [
+        {
+          "level": 1,
+          "text": "Pricing"
+        }
+      ],
+      "products": [
+        {
+          "name": "Sourdough loaf",
+          "offers": [
+            {
+              "availability": "https://schema.org/InStock",
+              "price": "5.50",
+              "priceCurrency": "EUR"
+            }
+          ]
+        }
+      ],
+      "schemaTypes": [
+        "Product"
+      ],
+      "title": "Pricing | Fixture Bakery"
+    },
+    "fromCache": true,
+    "sourceTrust": "untrusted-web-content",
+    "url": "http://127.0.0.1:3298/pricing.html"
+  }
+}

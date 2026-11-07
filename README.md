@@ -20,8 +20,10 @@ show the hash and HTTP validators behind a result.
 
 Unlike Firecrawl and generic scraping APIs, this project is site-scoped,
 robots-compliant, deterministic about change evidence, self-hosted and free.
-It is the content-access layer; scheduling, snapshots, diffs and alerts belong
-in the workflow you build around it.
+It returns deterministic evidence only (hashes, validators, line diffs and
+structured facts). No language model runs inside the server. Scheduling and
+alerting stay outside it, and a companion watcher command is included: see
+[`docs/watcher.md`](./docs/watcher.md).
 
 ## Quick start: one minute to useful search
 
@@ -57,9 +59,33 @@ public HTTP transport is deliberately read-only: populate search with
 > 3. It summarises the returned Markdown and cites the source URLs, retaining
 >    `contentHash`, `ETag` and `fetchedAt` for the next comparison.
 
-For a recurring change workflow, persist those deterministic fields outside the
-MCP server, re-read the same pages later, and only ask AI to classify or
-summarise a verified difference.
+For a recurring change workflow, `content_diff` keeps the previous version of a
+page and returns a bounded line diff with old and new hashes, and the
+[watcher](./docs/watcher.md) runs a whole watchlist and writes a Markdown report
+of only the pages that changed. Ask AI to classify or summarise a verified
+difference, not to find it.
+
+### More examples
+
+> **Prompt:** “Has the Starter price on the competitor's pricing page changed since last week?”
+>
+> The agent calls `content_diff` for the page. On the first call it stores a
+> baseline and says so. On later calls it reports `changed`, the old and new
+> `contentHash` and `fetchedAt`, the added and removed lines, and a one-line
+> summary such as “Amounts no longer shown: €49; now shown: €59.”
+
+> **Prompt:** “What does this page offer and what does it ask visitors to do?”
+>
+> The agent calls `content_extract_facts` and reads the outline, calls to
+> action, pricing signals (amount, plan, billing period) and schema.org data.
+> Anything the page does not state is left out rather than guessed.
+
+> **Prompt:** “Give me a site-health pass for my own site.”
+>
+> The agent calls `content_site_health` and gets findings grouped as critical,
+> high, medium and low: non-200 sitemap pages, broken internal links, missing or
+> duplicate titles, canonicals that point elsewhere, missing H1s and more. It
+> is bounded and polite, so keep it to sites you own.
 
 ## Offline regression tests
 
@@ -76,10 +102,14 @@ integration test remains opt-in and is skipped by default.
 - **Deterministic change evidence**: each page includes a SHA-256 of the complete normalised markdown plus upstream `ETag` / `Last-Modified` validators when available.
 - **Extraction-quality evidence**: results state whether content came from Readability, the cleaned body, plain text or metadata-only fallback, with actionable warnings for client-rendered shells.
 - **Commerce-aware metadata**: bounded schema.org `Product` / `Offer` JSON-LD is returned as structured product, SKU, GTIN, brand, price, currency and availability facts.
+- **Change evidence**: `content_diff` stores the previous normalized Markdown per URL in a bounded store (retention and entry limits) and returns changed or not, old and new hashes and fetch times, a compact line diff and a deterministic summary. First sight, unchanged pages, `304` responses and stale-on-error fallbacks are each reported explicitly.
+- **Structured facts**: `content_extract_facts` returns title, description, canonical, outline, calls to action, pricing signals, schema.org types and dated index items. Unknown values are omitted.
+- **Site health**: `content_site_health` checks titles, descriptions, canonicals, JSON-LD, headings, non-200 sitemap pages, broken internal links and pages missing from the sitemap, ranked by severity.
+- **Multiple sites, still allowlisted**: tools accept an optional `site` from `SITE_ALLOWLIST`. Each site has its own robots.txt rules, cache scope, search scope and request pacing, and redirects to a different site are refused.
 - **Discovery**: page listing from `sitemap.xml`, sitemaps advertised in `robots.txt`, or a configured page list.
 - **Disk cache**: fetched pages cached with a configurable TTL and a size bound; reads prefer cache, then a conditional revalidation, then stale-on-error.
-- **Polite by default**: respects `robots.txt` disallow rules, rate-limits to ~1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
-- **Scoped to one site**: fetches are refused for any host outside the configured site.
+- **Polite by default**: respects `robots.txt` disallow rules, rate-limits to about 1 request/second, honours `Retry-After`, and sends `If-None-Match` / `If-Modified-Since` so unchanged pages cost a `304`.
+- **Scoped to the configured sites**: fetches are refused for any host outside the base site and the operator's allowlist.
 - **Public-network safe by default**: allowed hostnames are resolved before every request and redirect hop; private, loopback, link-local and special-use destinations require an explicit operator opt-in.
 - **Two transports**: Streamable HTTP and stdio.
 
@@ -121,6 +151,9 @@ provide them.
 | `content_list_pages` | List discoverable pages (sitemap → robots.txt sitemaps → configured list). Returns URL, title, last-modified when known. |
 | `content_refresh` | Walk the discoverable pages and warm the cache so `content_search` has something to search. Skips robots-disallowed pages. Available on stdio; opt-in on HTTP. |
 | `content_get_page` | Fetch a page URL, strip to clean markdown, return content + metadata, content hash and any schema.org Product/Offer facts. Supports `max_length`; forced `refresh` is disabled on public HTTP by default. |
+| `content_extract_facts` | Bounded structured facts from a page: title, meta description, canonical, H1 to H3 outline, calls to action, pricing signals, schema.org types and Product/Offer data, and dated blog or news items when the page is an index. Unknown values are omitted. |
+| `content_diff` | Compare a page with the version stored by the previous call: changed or not, old and new `contentHash` and `fetchedAt`, a compact added and removed line diff and a one-line summary. Stores the new version as the baseline. Available where refresh is allowed (stdio, or HTTP with `HTTP_ALLOW_REFRESH=true`). |
+| `content_site_health` | Bounded health check of a site's sitemap pages and internal links, grouped by severity. Available where refresh is allowed, because it fetches many pages. |
 | `content_search` | Keyword search over cached pages. Returns URL, score, snippet and the last completed refresh time. |
 | `content_get_sitemap` | Return the raw sitemap structure (URLs + last-modified/priority/change-frequency when present). |
 | `content_health` | Server status: configured site, allowed hosts, cache directory, cache size, last fetch time and last completed refresh time. |
@@ -180,7 +213,7 @@ Configuration is via environment variables (see [`.env.example`](./.env.example)
 | `SNAPSHOT_MAX_ENTRIES` | | `1000` | Maximum stored URLs, removing the least recently compared first. `0` disables snapshots. |
 | `SNAPSHOT_MAX_MARKDOWN_CHARS` | | `200000` | Maximum Markdown characters stored per version. The hash always covers the full text. |
 | `FETCH_TIMEOUT_MS` | | `10000` | Per-request timeout. |
-| `FETCH_MIN_INTERVAL_MS` | | `1000` | Minimum spacing between fetches (~1 req/sec). |
+| `FETCH_MIN_INTERVAL_MS` | | `1000` | Minimum spacing between fetches (about 1 request per second). |
 | `FETCH_MAX_BYTES` | | `5000000` | Hard cap on a single response body. |
 | `FETCH_MAX_RETRIES` | | `1` | Retries on 429/503, honouring `Retry-After`. |
 | `FETCH_ALLOW_PRIVATE_NETWORK` | | `false` | Permit configured hosts to resolve to private/special-use IPs. Use only for deliberate internal-site deployments. |
@@ -298,7 +331,9 @@ npm run check      # typecheck + lint + build + test
 
 ## Testing
 
+- **Contract suite**: `npm run eval:contract` checks the tool list, input schemas and golden outputs against a local fixture site.
 - **Unit tests** cover HTML→markdown conversion, the disk cache (TTL and eviction), robots parsing, sitemap parsing, the fetcher (size cap, conditional headers, `Retry-After` retries, rate limiting) and the content service (host scoping, robots enforcement, truncation, cache warming, 304 revalidation, stale fallback). All offline, against a local fixture and a stubbed fetch.
+- **Feature tests** cover the multi-site allowlist (refusals, per-site robots, cache and pacing isolation, redirect refusal), `content_diff` (first sight, unchanged, `304`, stale-on-error, bounds), fact extraction against saved HTML fixtures, site-health checks, the watcher (baseline, no-change idempotence, forced change, dry run, exit codes) and the vault feed against a temporary directory.
 - **A live integration test** runs against `https://example.com`, exercising `health`, `list_pages`, `get_page`, and `search`.
 
 ```bash
@@ -317,7 +352,8 @@ Without `LIVE_SITE_URLS`, the live check falls back to `https://example.com`.
 
 ## Dogfood monitoring
 
-The source repository includes a bounded snapshot-and-diff proof harness. It
+The source repository includes a bounded snapshot-and-diff proof harness
+(the older, hash-only precursor of the watcher). It
 stores hashes, validators, extraction quality and warnings without retaining
 page bodies:
 
@@ -353,17 +389,19 @@ npx -y -p @sarutobi-sasuke/website-content-mcp website-content-dogfood
 - Streamable HTTP defaults to a read-only tool surface. Keep
   `HTTP_ALLOW_REFRESH=false` for anonymous deployments.
 - Respects `robots.txt`, fetched and enforced per origin; disallowed paths are refused.
-- Rate-limited to ~1 request/second against the target site.
+- Rate-limited to about 1 request per second against the target site.
 - Response bodies are capped at `FETCH_MAX_BYTES` and the cache at `CACHE_MAX_ENTRIES`.
 - Never logs full page bodies (only URLs, status codes, and sizes).
 
 ## What this server is not
 
-This project is the content-access foundation for monitoring workflows; it is
-not itself a scheduler or alerting service. Competitor monitoring additionally
-needs durable snapshots, deterministic diffs, a scheduler, notifications and
-an evidence-retention policy. AI can classify and summarise verified changes,
-but should not replace the underlying hashes, fields and source records.
+The server is the content-access and evidence layer. It is not a scheduler or
+an alerting service, and nothing in it calls a language model. `content_diff`
+gives per-page change evidence and the companion [watcher](./docs/watcher.md)
+adds a watchlist, snapshots and reports, but running it on a schedule, routing
+alerts and deciding how long to keep evidence remain the operator's job. AI can
+classify and summarise verified changes, but should not replace the underlying
+hashes, fields and source records.
 
 ## License
 

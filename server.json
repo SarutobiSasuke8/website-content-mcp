@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.SarutobiSasuke8/website-content-mcp",
   "title": "Website Content MCP",
-  "description": "Polite, site-scoped website discovery and agent-readable content extraction with caching, commerce metadata and deterministic content hashes.",
+  "description": "Polite, site-scoped website discovery and agent-readable content extraction with caching, commerce metadata, deterministic content hashes, page diffs, structured facts and site-health checks.",
   "websiteUrl": "https://github.com/SarutobiSasuke8/website-content-mcp",
   "repository": {
     "url": "https://github.com/SarutobiSasuke8/website-content-mcp",
@@ -32,6 +32,10 @@
         {
           "name": "SITE_ALLOWED_HOSTS",
           "description": "Optional comma-separated additional hosts the operator explicitly permits."
+        },
+        {
+          "name": "SITE_ALLOWLIST",
+          "description": "Optional comma-separated sites that tools may select with the site argument, in addition to the base site."
         }
       ]
     }

@@ -24,6 +24,7 @@
       "url": "http://127.0.0.1:3298/private/staff.html"
     }
   ],
+  "site": "127.0.0.1:3298",
   "source": "sitemap",
   "warnings": []
 }

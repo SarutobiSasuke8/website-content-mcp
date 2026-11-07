@@ -3,7 +3,53 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-07 (unreleased candidate)
+
+This section combines the previously staged 0.4.0 notes (below, under "Earlier
+0.4.0 notes") with the work added since. Nothing here has been published.
+
+### Added
+
+- `content_diff`: compare a page with the version stored by the previous call
+  and return whether it changed, old and new hashes and fetch times, a bounded
+  line diff and a deterministic one-line summary. First sight, unchanged, `304`
+  and stale-on-error are reported explicitly. Backed by a bounded snapshot store
+  (`SNAPSHOT_DIR`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_MAX_ENTRIES`,
+  `SNAPSHOT_MAX_MARKDOWN_CHARS`). Exposed only where refresh is allowed.
+- `content_extract_facts`: bounded structured facts (title, description,
+  canonical, outline, calls to action, pricing signals, schema.org types and
+  Product/Offer data, dated index items). Unknown values are omitted.
+- `content_site_health`: a bounded, polite health check of sitemap pages and
+  internal links, grouped by severity. Exposed only where refresh is allowed.
+- `SITE_ALLOWLIST` and an optional `site` argument on the page, list, sitemap,
+  search and refresh tools. Robots rules, cache scope, search scope, refresh
+  time and request pacing are per site.
+- `website-content-watcher`, a companion command line tool with a YAML or JSON
+  watchlist, snapshots, Markdown change reports, `--dry-run`, exit codes and an
+  opt-in Obsidian vault feed. See `docs/watcher.md`.
+- Health output now lists `siteAllowlist`; list, sitemap and refresh results
+  name the `site` they describe.
+
+### Changed
+
+- Request pacing is now per host instead of one global interval. A request to
+  one site no longer waits for another site's interval.
+- Redirects to a different site are refused, even when that site is allowlisted,
+  so a target's robots.txt rules can never be skipped. Redirects between the
+  `www` and bare form of one host still work.
+- `content_search` searches the selected site only (the base site by default)
+  instead of every cached page.
+- The contract suite covers the three new tools and the `site` argument.
+
+### Documentation
+
+- SECURITY.md states the proxy trust boundary and that the client IP is used
+  only for the inbound rate limit. The `proxy-addr` advisory
+  GHSA-jqcg-44mw-7w3h is already resolved by the locked 2.0.8.
+- README and ROADMAP describe the new tools and put useful work ahead of
+  distribution.
+
+## Earlier 0.4.0 notes
 
 ### Added
 
@@ -26,8 +72,6 @@ All notable changes to this project are documented here. This project follows
 
 - Document refresh cadence, per-IP limits, trusted proxy configuration and the
   recommended production timeouts.
-
-## [0.4.0] — 2026-08-28
 
 ### Security
 
