@@ -34,6 +34,7 @@ Options:
   --watchlist <file>        YAML or JSON watchlist (default: watchlist.yaml)
   --out <dir>               Snapshots, reports and HTTP cache live here (default: ./watcher-output)
   --dry-run                 Fetch and compare but write nothing; print the report instead
+  --vault <dir>             Also write the report into an Obsidian vault and append inbox tasks
   --min-interval-ms <n>     Minimum milliseconds between requests to one host (default: 1000)
   --allow-private-network   Permit hosts that resolve to private addresses (local test sites only)
   --quiet                   Print only the final summary line
@@ -78,6 +79,7 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
       options: {
         watchlist: { type: "string", default: "watchlist.yaml" },
         out: { type: "string", default: "watcher-output" },
+        vault: { type: "string" },
         "dry-run": { type: "boolean", default: false },
         "min-interval-ms": { type: "string" },
         "allow-private-network": { type: "boolean", default: false },
@@ -111,6 +113,11 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     if (result.dryRun && result.reportMarkdown) {
       io.out("\n--- dry run: report that would be written ---\n");
       io.out(result.reportMarkdown);
+    }
+    if (values.vault) {
+      const { writeVaultFeed } = await import("./vault.js");
+      const feed = await writeVaultFeed(result, { vaultDir: values.vault, dryRun: values["dry-run"] });
+      for (const line of feed.messages) io.out(line);
     }
     const watched = result.results.length;
     io.out(
