@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pricing | Acme Analytics</title>
+  <meta name="description" content="Simple pricing for teams of every size.">
+  <link rel="canonical" href="/pricing">
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[
+      {"@type":"Organization","name":"Acme Analytics"},
+      {"@type":"Product","name":"Acme Pro","sku":"ACME-PRO","offers":{"@type":"Offer","price":"99","priceCurrency":"EUR","availability":"https://schema.org/InStock"}}
+    ]}
+  </script>
+  <script>window.tracking = "€1 should never be read from scripts";</script>
+</head>
+<body>
+  <header>
+    <nav><a href="/">Home</a> <a href="/pricing">Pricing</a></nav>
+    <a class="btn btn-primary" href="/signup?plan=trial">Start free trial</a>
+  </header>
+  <main>
+    <h1>Plans and pricing</h1>
+    <h2>Choose a plan</h2>
+    <section class="plans">
+      <div class="plan-card">
+        <h3>Starter</h3>
+        <p class="price"><span class="currency">€</span><span class="figure">49</span> <span class="period">per month</span></p>
+        <ul><li>Up to 5 users</li></ul>
+        <a class="button" href="/signup?plan=starter">Choose Starter</a>
+      </div>
+      <div class="plan-card">
+        <h3>Pro</h3>
+        <p class="price">€99 / month</p>
+        <ul><li>Unlimited users</li></ul>
+        <a class="button" href="/signup?plan=pro">Choose Pro</a>
+      </div>
+      <div class="plan-card">
+        <h3>Enterprise</h3>
+        <p>Custom pricing. Contact sales for a quote.</p>
+        <button type="button">Talk to sales</button>
+      </div>
+    </section>
+    <p>Annual billing saves 20%. Set-up is a one-off €500 fee for onboarding.</p>
+    <a href="/privacy">Privacy policy</a>
+    <button type="reset">Reset</button>
+    <a class="btn" href="javascript:void(0)">Do not follow</a>
+  </main>
+</body>
+</html>

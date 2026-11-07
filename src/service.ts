@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 
 import { normalizeHost, parseSiteHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
+import { extractFacts } from "./facts.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { diffLines, summarizeDiff } from "./diff.js";
 import { parseSitemap } from "./sitemap.js";
 
 import type { DiskCache } from "./cache.js";
 import type { LineDiff } from "./diff.js";
+import type { PageFacts } from "./facts.js";
 import type { SnapshotStore } from "./snapshots.js";
 import type { AppConfig } from "./config.js";
 import type { ConditionalHeaders, Fetcher } from "./fetcher.js";
@@ -380,6 +382,29 @@ export class ContentService {
     }
     if (warnings.length > 0) result.warnings = warnings;
     return result;
+  }
+
+  /** Structured, bounded facts read from a page's HTML. Unknown values are omitted. */
+  public async getFacts(
+    rawUrl: string,
+    options: { refresh?: boolean; site?: string } = {},
+  ): Promise<{ url: string; finalUrl?: string; fetchedAt: string; fromCache: boolean; facts: PageFacts; sourceTrust: "untrusted-web-content" }> {
+    const url = this.resolveAllowed(rawUrl, options.site);
+    await this.assertAllowed(url);
+    const { record, fromCache } = await this.load(url, options.refresh ?? false);
+    if (record.status >= 400) throw new Error(`Fetch failed for '${url}' with HTTP ${record.status}.`);
+    const facts: PageFacts = isHtml(record)
+      ? extractFacts(record.body, record.finalUrl ?? url)
+      : { warnings: ["The response is not an HTML page, so no page facts were extracted."] };
+    if (record.truncated) facts.warnings = [...(facts.warnings ?? []), "The response was cut at the size cap, so the facts may be incomplete."];
+    return {
+      url,
+      ...(record.finalUrl ? { finalUrl: record.finalUrl } : {}),
+      fetchedAt: record.fetchedAt,
+      fromCache,
+      facts,
+      sourceTrust: "untrusted-web-content",
+    };
   }
 
   /** Fetch and parse a sitemap, following one level of sitemap-index nesting. */
