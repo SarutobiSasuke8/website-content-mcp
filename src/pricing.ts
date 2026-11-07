@@ -276,7 +276,8 @@ export function extractPricingTable(doc: Document): PricingTable | undefined {
   let position = 0;
   for (const heading of Array.from(body.querySelectorAll(HEADING))) {
     const name = norm(heading.textContent);
-    if (!name || name.length > 60 || parseMoney(name).length > 0 || SKIPPED_HEADING.test(name)) continue;
+    // A question heading is an FAQ entry, not a plan.
+    if (!name || name.length > 60 || name.endsWith("?") || parseMoney(name).length > 0 || SKIPPED_HEADING.test(name)) continue;
     if (heading.closest("table, nav, footer, header")) continue;
     const elements = cardElements(heading, body);
     if (elements.length === 0) continue;

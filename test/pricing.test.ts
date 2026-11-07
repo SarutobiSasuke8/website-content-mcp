@@ -82,6 +82,12 @@ void test("a page that mentions a fine amount in a card does not produce a plan"
   assert.equal(table, undefined);
 });
 
+void test("FAQ questions are neither plans nor promotions", () => {
+  const table = extractFacts(page('<h3>Starter</h3><p>$5 per month</p><h3>Is there a yearly discount?</h3><p>We offer a 15% discount for annual billing. From $5 per month.</p><p>Do you offer a discount for startups?</p>'), "https://x.test/").pricingTable;
+  assert.deepEqual(table?.plans.map((plan) => plan.name), ["Starter"]);
+  assert.ok(!table?.promos.some((promo) => promo.endsWith("?")));
+});
+
 void test("promotion banners are collected", () => {
   const table = extractFacts(page(`<div class="banner"><strong>Save 20% with annual billing, limited-time offer</strong></div>
     <h3>Basic</h3><p>$5 per month</p>`), "https://x.test/").pricingTable;
