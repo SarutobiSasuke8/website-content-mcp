@@ -33,5 +33,7 @@ applies. Keep private-network egress restrictions as defence in depth: address
 classification is not a universal guarantee about unusual network routing,
 operator-configured NAT or the trustworthiness of public website content.
 
+The HTTP transport trusts no proxy unless the operator lists one in `HTTP_TRUST_PROXY`, and the client IP is used only for the inbound per-IP request limit, never for access control or any other decision. Write IPv4 trust entries in plain IPv4 form or with a full prefix (advisory GHSA-jqcg-44mw-7w3h in `proxy-addr` concerns short-prefix IPv4-mapped IPv6 subnets). The lockfile resolves `proxy-addr` 2.0.8 and `npm audit --omit=dev` reports no critical advisories.
+
 The server respects `robots.txt`, but operators remain responsible for source
 terms, applicable law and authorization for any private or authenticated use.
