@@ -82,9 +82,44 @@ With `--vault <dir>` the watcher also writes into an Obsidian vault. This is opt
 
 `--dry-run` shows what would be added and writes nothing.
 
+## Demonstration
+
+These runs use a local fixture page served from `127.0.0.1` (the sample is `tests/fixtures/pricing.html`) so they can be repeated safely. `--allow-private-network` is needed only because the fixture is local.
+
+1. Run 1 baselines the page: exit 0, one page baselined, no report.
+2. Run 2 changes nothing: exit 0, one page unchanged, no report, no file touched.
+3. The fixture is edited: the Starter price goes from €49 to €59, a button is reworded and a "Book a demo" button is added.
+4. A dry run exits 2, prints the report and the four task lines it would add, and writes nothing.
+5. The real run exits 2, writes `reports/YYYY-MM-DD Watcher Report.md` and, with `--vault` pointing at a temporary vault, one dated note plus four `#task #inbox` lines.
+6. A further run exits 0 because the edited version is now the baseline.
+
+The report for step 5 lists, as material changes: `Plan "Starter" changed from €49/month to €59/month`, two buttons added and one removed. The visible text was unchanged in this fixture because the page's readable body did not include the price block, which is why the report compares structured facts as well as text.
+
 ## Scheduling
 
-Scheduling is deliberately outside the tool. See the weekly run proposal at the end of this page, which is a proposal only: nothing is scheduled by this repository.
+Scheduling is deliberately outside the tool, and this repository does not create any schedule. Below is a proposal for a weekly Monday run. Replace the placeholder paths with your own. Run it from a checkout that has been built with `npm run build`.
+
+The command:
+
+```bash
+node dist/scripts/watcher/cli.js --watchlist "<path to watchlist.yaml>" --out "<path to watcher data directory>" --vault "<path to vault>" --quiet
+```
+
+Exit code 2 means pages changed, which is the useful outcome. Exit code 3 means some pages could not be checked. Exit code 1 means something is misconfigured. A scheduler should treat 0 and 2 as success.
+
+### Windows Task Scheduler (PowerShell)
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "node.exe" -WorkingDirectory "<path to website-content-mcp checkout>" -Argument 'dist\scripts\watcher\cli.js --watchlist "<path to watchlist.yaml>" --out "<path to watcher data directory>" --vault "<path to vault>" --quiet'
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 7:30am
+Register-ScheduledTask -TaskName "Website Content Watcher (weekly)" -Action $action -Trigger $trigger -Description "Checks the watchlist and writes change reports. Exit code 2 means pages changed."
+```
+
+### Claude scheduled task
+
+A scheduled task with the cron expression `30 7 * * 1` and a prompt such as: "Run the website content watcher command from docs/watcher.md. If it exits with code 2, read the newest report in the watcher output folder and summarise the material changes in three bullets, quoting the fact changes exactly. Do not edit the watchlist or the vault beyond what the watcher itself wrote." Keep the summarising step separate from the watcher: the watcher supplies the evidence and the agent only reads it.
+
+Check the first scheduled run by hand before relying on it, and keep the watcher data directory outside the vault so snapshots and the HTTP cache do not sync as notes.
 
 ## Limits and honesty
 
