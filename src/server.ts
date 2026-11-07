@@ -179,6 +179,26 @@ export function createContentMcpServer(
 
   if (allowRefresh) {
     server.registerTool(
+      "content_site_health",
+      {
+        title: "Check site health",
+        description:
+          "Check a site's sitemap pages for missing or duplicate titles, missing meta descriptions, missing or non-self canonicals, missing JSON-LD, missing or multiple H1s and non-200 responses, then check internal links for broken targets and pages linked but absent from the sitemap. Findings are grouped by severity (critical, high, medium, low). Bounded by max_pages and max_links, rate-limited to about 1 request per second, and robots.txt is respected, so a full pass takes a while. Intended for sites you own.",
+        inputSchema: z.object({
+          site: siteInput,
+          max_pages: z.number().int().min(1).max(200).default(25)
+            .describe("Maximum sitemap pages to fetch and check."),
+          max_links: z.number().int().min(0).max(200).default(25)
+            .describe("Maximum additional internal link targets to fetch and check."),
+        }),
+        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async ({ site, max_pages, max_links }) => runTool(async () => ({
+        report: await service.siteHealth({ maxPages: max_pages, maxLinks: max_links, ...(site ? { site } : {}) }),
+      })),
+    );
+
+    server.registerTool(
       "content_diff",
       {
         title: "Diff a page against its stored baseline",

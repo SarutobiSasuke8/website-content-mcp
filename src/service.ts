@@ -5,12 +5,14 @@ import { htmlToMarkdown } from "./content.js";
 import { extractFacts } from "./facts.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { diffLines, summarizeDiff } from "./diff.js";
+import { auditHtml, comparableUrl, duplicateTitleFindings, looksLikeAsset, pageFindings, SEVERITIES } from "./site-health.js";
 import { parseSitemap } from "./sitemap.js";
 
 import type { DiskCache } from "./cache.js";
 import type { LineDiff } from "./diff.js";
 import type { PageFacts } from "./facts.js";
 import type { SnapshotStore } from "./snapshots.js";
+import type { HealthFinding, Severity } from "./site-health.js";
 import type { AppConfig } from "./config.js";
 import type { ConditionalHeaders, Fetcher } from "./fetcher.js";
 import type { RobotsRules } from "./robots.js";
@@ -87,6 +89,25 @@ export interface PageDiff {
   diff?: LineDiff;
   summary: string;
   warnings?: string[];
+  sourceTrust: "untrusted-web-content";
+}
+
+/** Result of a bounded health check over one site. */
+export interface SiteHealthReport {
+  site: string;
+  checkedAt: string;
+  sitemapUrl: string;
+  sitemapPages: number;
+  pagesChecked: number;
+  linksChecked: number;
+  /** Pages and links not fetched because robots.txt disallows them. */
+  skippedByRobots: number;
+  summary: Record<Severity, number> & { total: number };
+  /** Findings grouped by severity, most severe first. Each group is capped; `summary` holds true counts. */
+  findings: Record<Severity, HealthFinding[]>;
+  pages: { url: string; status: number | "error" | "robots-disallowed"; issues: string[] }[];
+  truncated: boolean;
+  warnings: string[];
   sourceTrust: "untrusted-web-content";
 }
 
@@ -403,6 +424,157 @@ export class ContentService {
       fetchedAt: record.fetchedAt,
       fromCache,
       facts,
+      sourceTrust: "untrusted-web-content",
+    };
+  }
+
+  /**
+   * Check a site's pages for common search and structure problems. Bounded in
+   * pages and links, and every fetch goes through the same robots check, cache
+   * and rate-limited fetcher as the other tools.
+   */
+  public async siteHealth(options: { site?: string; maxPages?: number; maxLinks?: number } = {}): Promise<SiteHealthReport> {
+    const context = this.siteFor(options.site);
+    const maxPages = Math.max(1, Math.min(options.maxPages ?? 25, 200));
+    const maxLinks = Math.max(0, Math.min(options.maxLinks ?? 25, 200));
+    const warnings: string[] = [];
+    const all: HealthFinding[] = [];
+    const pages: SiteHealthReport["pages"] = [];
+
+    const sitemap = await this.loadSitemapEntries(context.sitemapUrl);
+    warnings.push(...sitemap.warnings);
+    const sitemapUrls = sitemap.entries
+      .map((entry) => entry.url)
+      .filter((url) => {
+        const same = isSameSite(url, context.host);
+        if (!same) warnings.push(`Ignored off-site sitemap entry '${url}'.`);
+        return same;
+      });
+    const listed = sitemapUrls.length > 0 ? sitemapUrls : (context.configuredPages.length > 0 ? context.configuredPages : [context.baseUrl]);
+    if (sitemapUrls.length === 0) warnings.push("No sitemap pages were found, so only the configured pages were checked and the not-in-sitemap check is not meaningful.");
+    const sitemapSet = new Set(sitemapUrls.map(comparableUrl));
+    const window = listed.slice(0, maxPages);
+    const checked = new Set<string>();
+
+    let skippedByRobots = 0;
+    const titles = new Map<string, string>();
+    const linkSources = new Map<string, string>();
+
+    for (const raw of window) {
+      let url: string;
+      try {
+        url = this.resolveAllowed(raw, options.site);
+      } catch {
+        continue;
+      }
+      checked.add(comparableUrl(url));
+      if (!(await this.isRobotsAllowed(url))) {
+        skippedByRobots += 1;
+        pages.push({ url, status: "robots-disallowed", issues: [] });
+        continue;
+      }
+      let loaded: LoadResult;
+      try {
+        loaded = await this.load(url);
+      } catch (error) {
+        all.push({ severity: "critical", check: "sitemap-page-unreachable", url, detail: `The page could not be fetched: ${error instanceof Error ? error.message : "unknown error"}` });
+        pages.push({ url, status: "error", issues: ["sitemap-page-unreachable"] });
+        continue;
+      }
+      const { record } = loaded;
+      if (record.status !== 200) {
+        all.push({ severity: "critical", check: "sitemap-non-200", url, detail: `The sitemap lists this page but it returned HTTP ${record.status}.` });
+        pages.push({ url, status: record.status, issues: ["sitemap-non-200"] });
+        continue;
+      }
+      const issues: HealthFinding[] = [];
+      if (record.finalUrl && comparableUrl(record.finalUrl) !== comparableUrl(url)) {
+        issues.push({ severity: "medium", check: "sitemap-redirect", url, detail: `The sitemap lists this URL but it redirects to ${record.finalUrl}.` });
+      }
+      if (isHtml(record)) {
+        const audit = auditHtml(record.body, record.finalUrl ?? url, context.host);
+        issues.push(...pageFindings(url, audit));
+        if (audit.title) titles.set(url, audit.title);
+        for (const link of audit.internalLinks) {
+          if (!linkSources.has(link)) linkSources.set(link, url);
+        }
+      }
+      all.push(...issues);
+      pages.push({ url, status: 200, issues: issues.map((issue) => issue.check) });
+    }
+    all.push(...duplicateTitleFindings(titles));
+    for (const page of pages) {
+      const dupe = all.some((finding) => finding.check === "duplicate-title" && finding.url === page.url);
+      if (dupe) page.issues.push("duplicate-title");
+    }
+
+    // Links: check targets not already examined, within the budget.
+    let linksChecked = 0;
+    let linksTruncated = false;
+    for (const [target, source] of linkSources) {
+      if (checked.has(comparableUrl(target)) || looksLikeAsset(target)) continue;
+      if (linksChecked >= maxLinks) {
+        linksTruncated = true;
+        break;
+      }
+      let url: string;
+      try {
+        url = this.resolveAllowed(target, options.site);
+      } catch {
+        continue;
+      }
+      checked.add(comparableUrl(url));
+      if (!(await this.isRobotsAllowed(url))) {
+        skippedByRobots += 1;
+        continue;
+      }
+      linksChecked += 1;
+      try {
+        const { record } = await this.load(url);
+        if (record.status >= 400) {
+          all.push({ severity: "critical", check: "broken-internal-link", url, detail: `Linked from ${source} but returned HTTP ${record.status}.`, related: [source] });
+        } else if (record.status === 200 && sitemapUrls.length > 0) {
+          const inSitemap = sitemapSet.has(comparableUrl(url)) || (record.finalUrl !== undefined && sitemapSet.has(comparableUrl(record.finalUrl)));
+          if (!inSitemap) {
+            all.push({ severity: "medium", check: "linked-not-in-sitemap", url, detail: `Linked from ${source} and reachable, but missing from the sitemap.`, related: [source] });
+          }
+        }
+      } catch (error) {
+        all.push({ severity: "critical", check: "broken-internal-link", url, detail: `Linked from ${source} but could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`, related: [source] });
+      }
+    }
+    if (linksTruncated) warnings.push(`The link check stopped at ${maxLinks} links; raise max_links to check more.`);
+    if (listed.length > maxPages) warnings.push(`Only the first ${maxPages} of ${listed.length} sitemap pages were checked; raise max_pages to check more.`);
+
+    const PER_GROUP_CAP = 100;
+    const findings: Record<Severity, HealthFinding[]> = { critical: [], high: [], medium: [], low: [] };
+    const summary = { critical: 0, high: 0, medium: 0, low: 0, total: 0 };
+    for (const finding of all) {
+      summary[finding.severity] += 1;
+      summary.total += 1;
+    }
+    let truncated = linksTruncated || listed.length > maxPages;
+    for (const severity of SEVERITIES) {
+      const group = all
+        .filter((finding) => finding.severity === severity)
+        .sort((a, b) => a.check.localeCompare(b.check) || a.url.localeCompare(b.url));
+      if (group.length > PER_GROUP_CAP) truncated = true;
+      findings[severity] = group.slice(0, PER_GROUP_CAP);
+    }
+
+    return {
+      site: context.host,
+      checkedAt: new Date().toISOString(),
+      sitemapUrl: context.sitemapUrl,
+      sitemapPages: sitemapUrls.length,
+      pagesChecked: pages.length,
+      linksChecked,
+      skippedByRobots,
+      summary,
+      findings,
+      pages: pages.slice(0, 200),
+      truncated,
+      warnings,
       sourceTrust: "untrusted-web-content",
     };
   }
