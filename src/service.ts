@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { normalizeHost, parseSiteHost } from "./config.js";
 import { htmlToMarkdown } from "./content.js";
 import { extractFacts } from "./facts.js";
+import { restrictHtml } from "./section.js";
 import { isPathAllowed, parseRobots } from "./robots.js";
 import { diffLines, summarizeDiff } from "./diff.js";
 import { auditHtml, comparableUrl, duplicateTitleFindings, looksLikeAsset, pageFindings, SEVERITIES } from "./site-health.js";
@@ -11,6 +12,7 @@ import { parseSitemap } from "./sitemap.js";
 import type { DiskCache } from "./cache.js";
 import type { LineDiff } from "./diff.js";
 import type { PageFacts } from "./facts.js";
+import type { SectionHint } from "./section.js";
 import type { SnapshotStore } from "./snapshots.js";
 import type { HealthFinding, Severity } from "./site-health.js";
 import type { AppConfig } from "./config.js";
@@ -109,6 +111,28 @@ export interface SiteHealthReport {
   truncated: boolean;
   warnings: string[];
   sourceTrust: "untrusted-web-content";
+}
+
+/** One observation of a page for the watcher: content, facts and how it was obtained. */
+export interface WatchedPage {
+  url: string;
+  status: number;
+  fetchedAt: string;
+  outcome: LoadOutcome;
+  markdown: string;
+  contentHash: string;
+  title?: string;
+  facts?: PageFacts;
+  etag?: string;
+  lastModified?: string;
+  warnings: string[];
+}
+
+export class SectionNotFoundError extends Error {
+  public constructor(url: string, hint: SectionHint) {
+    super(`The ${hint.selector ? `selector '${hint.selector}'` : `section '${hint.section ?? ""}'`} matched nothing on '${url}'.`);
+    this.name = "SectionNotFoundError";
+  }
 }
 
 export class HostNotAllowedError extends Error {
@@ -576,6 +600,64 @@ export class ContentService {
       truncated,
       warnings,
       sourceTrust: "untrusted-web-content",
+    };
+  }
+
+  /**
+   * Observe a page for a watcher. A page that has gone (HTTP 4xx or 5xx) is
+   * returned with its status rather than thrown, so the caller can report the
+   * removal. Robots refusals, off-site URLs and unmatched section hints throw.
+   */
+  public async watchPage(
+    rawUrl: string,
+    options: SectionHint & { site?: string } = {},
+  ): Promise<WatchedPage> {
+    const url = this.resolveAllowed(rawUrl, options.site);
+    await this.assertAllowed(url);
+    const loaded = await this.load(url);
+    const { record } = loaded;
+    const warnings: string[] = [];
+    if (loaded.outcome === "stale-on-error") {
+      warnings.push(`The origin could not be reached (${loaded.staleReason ?? "unknown error"}); the cached copy from ${record.fetchedAt} was used.`);
+    }
+    const base = {
+      url,
+      status: record.status,
+      fetchedAt: record.fetchedAt,
+      outcome: loaded.outcome,
+      ...(record.etag ? { etag: record.etag } : {}),
+      ...(record.lastModified ? { lastModified: record.lastModified } : {}),
+    };
+    if (record.status >= 400) {
+      return { ...base, markdown: "", contentHash: createHash("sha256").update("").digest("hex"), warnings };
+    }
+
+    let extracted: ExtractedContent;
+    let facts: PageFacts | undefined;
+    if (isHtml(record)) {
+      const hint: SectionHint = {
+        ...(options.selector ? { selector: options.selector } : {}),
+        ...(options.section ? { section: options.section } : {}),
+      };
+      const restricted = restrictHtml(record.body, record.finalUrl ?? url, hint);
+      if (restricted === undefined) throw new SectionNotFoundError(url, hint);
+      const hinted = Boolean(hint.selector ?? hint.section);
+      extracted = hinted ? htmlToMarkdown(restricted, record.finalUrl ?? url) : await this.extractionOf(record);
+      facts = extractFacts(restricted, record.finalUrl ?? url);
+    } else {
+      extracted = await this.extractionOf(record);
+    }
+    if (record.truncated) warnings.push("The response was cut at the size cap, so the content may be incomplete.");
+    if (extracted.extractionQuality !== "full") {
+      warnings.push(`Extraction quality is '${extracted.extractionQuality}', so only what the server could read is compared.`);
+    }
+    return {
+      ...base,
+      markdown: extracted.markdown,
+      contentHash: createHash("sha256").update(extracted.markdown).digest("hex"),
+      ...(extracted.title ? { title: extracted.title } : {}),
+      ...(facts ? { facts } : {}),
+      warnings,
     };
   }
 

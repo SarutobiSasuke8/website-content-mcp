@@ -1,0 +1,26 @@
+# Sample watchlist for website-content-watcher.
+# Copy this file, replace the pages with ones you own or are entitled to read,
+# and run: website-content-watcher --watchlist my-watchlist.yaml --out ./watcher-output
+#
+# Every host named here is added to the site allowlist for the run. Any page
+# that robots.txt disallows is reported as an error and never fetched.
+version: 1
+items:
+  - url: https://example.com/pricing
+    label: Example pricing
+    why-it-matters: Our own price list. A silent change here would surprise customers.
+    kind: own-site
+    project: Example Project
+
+  - url: https://competitor.example/pricing
+    label: Competitor pricing
+    why-it-matters: Sets the price anchor we are compared against in sales calls.
+    kind: competitor
+
+  - url: https://competitor.example/product
+    label: Competitor plans section
+    why-it-matters: Only the plans section matters; the rest of the page changes daily.
+    kind: competitor
+    # Optional hints narrow what is compared. Use one of the two.
+    section: Plans
+    # selector: "main .plans"
