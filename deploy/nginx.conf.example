@@ -20,6 +20,19 @@ server {
         proxy_read_timeout 10s;
     }
 
+    # App serves /robots.txt (Disallow: / + noindex). Alternatively, serve statically:
+    # location = /robots.txt {
+    #     add_header X-Robots-Tag noindex;
+    #     alias /path/to/robots.txt;
+    # }
+    location = /robots.txt {
+        proxy_pass http://127.0.0.1:3215;
+        proxy_set_header Host 127.0.0.1:3215;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location = /mcp {
         limit_req zone=website_content_mcp burst=10 nodelay;
         proxy_pass http://127.0.0.1:3215;

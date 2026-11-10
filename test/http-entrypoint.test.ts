@@ -117,4 +117,18 @@ void test("HTTP entrypoint serves initialize, tools/list and tools/call as separ
   for (const response of concurrent) {
     assert.equal(response.status, 200, JSON.stringify(response.body));
   }
+
+  // Plain GET without SSE Accept -> 200 noindex info, not 406
+  const plain = await fetch(url, { method: "GET" });
+  assert.equal(plain.status, 200);
+  assert.match(plain.headers.get("x-robots-tag") ?? "", /noindex/i);
+  const plainText = await plain.text();
+  assert.match(plainText, /MCP endpoint for MCP clients/i);
+  assert.doesNotMatch(plainText, /Not Acceptable/i);
+
+  // robots.txt
+  const robots = await fetch(`http://127.0.0.1:${port}/robots.txt`);
+  assert.equal(robots.status, 200);
+  const robotsText = await robots.text();
+  assert.match(robotsText, /Disallow: \//);
 });
