@@ -9,6 +9,8 @@ export interface FetcherOptions {
   userAgent: string;
   /** Validate every outbound destination, including redirect targets. */
   isUrlAllowed?: (url: string) => boolean;
+  /** Optional extra check applied to each redirect hop, given the previous and next URL. */
+  isRedirectAllowed?: (from: string, to: string) => boolean;
   /** Resolve and validate the network destination before every request. */
   assertUrlAllowed?: (url: string) => Promise<void> | void;
   /** Supply a destination-bound connection pool. The fetcher owns its disposal. */
@@ -37,6 +39,14 @@ function retryDelayMs(retryAfter: string | null): number {
   return DEFAULT_BACKOFF_MS;
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -49,7 +59,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  */
 export class Fetcher {
   private chain: Promise<unknown> = Promise.resolve();
-  private lastStart = 0;
+  /** Start time of the latest request per host, so one site never delays or leaks pacing into another. */
+  private readonly lastStartByHost = new Map<string, number>();
 
   public constructor(private readonly options: FetcherOptions) {}
 
@@ -60,16 +71,16 @@ export class Fetcher {
     await this.options.assertUrlAllowed?.(url);
   }
 
-  private async pace(): Promise<void> {
-    const wait = this.lastStart + this.options.minIntervalMs - Date.now();
+  private async pace(host: string): Promise<void> {
+    const wait = (this.lastStartByHost.get(host) ?? 0) + this.options.minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
-    this.lastStart = Date.now();
+    this.lastStartByHost.set(host, Date.now());
   }
 
   /** Serialize a task behind the rate-limit gate. */
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+  private enqueue<T>(host: string, task: () => Promise<T>): Promise<T> {
     const run = this.chain.then(async () => {
-      await this.pace();
+      await this.pace(host);
       return task();
     });
     // Keep the chain alive even if this task rejects.
@@ -81,7 +92,7 @@ export class Fetcher {
    * Read a response body, stopping hard at `maxBytes` so one oversized page
    * cannot exhaust memory or fill the cache.
    */
-  private async readBody(response: Response): Promise<{ body: string; truncated: boolean }> {
+  private async readBody(response: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {
     if (!response.body) return { body: "", truncated: false };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -95,8 +106,8 @@ export class Fetcher {
         if (done) break;
         if (!value) continue;
         let chunk = value;
-        if (bytes + chunk.byteLength > this.options.maxBytes) {
-          chunk = chunk.subarray(0, Math.max(0, this.options.maxBytes - bytes));
+        if (bytes + chunk.byteLength > maxBytes) {
+          chunk = chunk.subarray(0, Math.max(0, maxBytes - bytes));
           truncated = true;
         }
         bytes += chunk.byteLength;
@@ -114,6 +125,7 @@ export class Fetcher {
   private async fetchOnce(
     url: string,
     conditional: ConditionalHeaders,
+    maxBytes: number,
   ): Promise<{ record: FetchRecord; retryAfter: string | null }> {
     let currentUrl = url;
     let currentConditional = conditional;
@@ -148,6 +160,9 @@ export class Fetcher {
           if (this.options.isUrlAllowed && !this.options.isUrlAllowed(nextUrl)) {
             throw new Error(`Refusing redirect from '${currentUrl}' to a URL outside the configured host allowlist.`);
           }
+          if (this.options.isRedirectAllowed && !this.options.isRedirectAllowed(currentUrl, nextUrl)) {
+            throw new Error(`Refusing redirect from '${currentUrl}' to a different site.`);
+          }
           currentUrl = nextUrl;
           // Validators describe the original representation and must not be
           // forwarded to a different URL.
@@ -158,7 +173,7 @@ export class Fetcher {
         // A 304 carries no body; the caller reuses its cached copy.
         const { body, truncated } = response.status === 304
           ? { body: "", truncated: false }
-          : await this.readBody(response);
+          : await this.readBody(response, maxBytes);
 
         const record: FetchRecord = { url, status: response.status, body, fetchedAt: new Date().toISOString() };
         if (currentUrl !== url) record.finalUrl = currentUrl;
@@ -181,11 +196,21 @@ export class Fetcher {
     throw new Error(`Too many redirects while fetching '${url}'.`);
   }
 
-  public fetch(url: string, conditional: ConditionalHeaders = {}): Promise<FetchRecord> {
-    return this.enqueue(async () => {
+  /**
+   * Fetch a URL. `limits.maxBytes` can lower, never raise, the configured body
+   * cap for one call, such as a bulk health check that wants small pages.
+   */
+  /** Wait for this host's turn in the rate limit without making a request, for callers that load the page another way. */
+  public waitTurn(url: string): Promise<void> {
+    return this.enqueue(hostOf(url), () => Promise.resolve());
+  }
+
+  public fetch(url: string, conditional: ConditionalHeaders = {}, limits: { maxBytes?: number } = {}): Promise<FetchRecord> {
+    const maxBytes = Math.min(this.options.maxBytes, limits.maxBytes ?? this.options.maxBytes);
+    return this.enqueue(hostOf(url), async () => {
       let attempt = 0;
       for (;;) {
-        const { record, retryAfter } = await this.fetchOnce(url, conditional);
+        const { record, retryAfter } = await this.fetchOnce(url, conditional, maxBytes);
         if (!RETRYABLE_STATUSES.has(record.status) || attempt >= this.options.maxRetries) return record;
         attempt += 1;
         await sleep(retryDelayMs(retryAfter));

@@ -105,6 +105,7 @@ export interface FetchRecord {
 
 /** Outcome of a cache-warming pass over the site's discoverable pages. */
 export interface RefreshResult {
+  site?: string;
   source: PageListing["source"];
   requested: number;
   fetched: number;
@@ -119,6 +120,7 @@ export interface HealthStatus {
   status: "ok";
   baseUrl: string;
   allowedHosts: string[];
+  siteAllowlist: string[];
   sitemapUrl: string;
   configuredPages: number;
   cacheDir: string;

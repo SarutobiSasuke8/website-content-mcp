@@ -4,6 +4,7 @@
     "fetched": 2,
     "requested": 4,
     "revalidated": 1,
+    "site": "127.0.0.1:3298",
     "skipped": 1,
     "source": "sitemap"
   }

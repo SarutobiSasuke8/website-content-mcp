@@ -45,6 +45,21 @@ void test("fetch caps the body at maxBytes and marks the record truncated", asyn
   );
 });
 
+void test("a per-call cap can lower the body limit but never raise it", async () => {
+  const body = "x".repeat(50_000);
+  await withFetch(
+    () => Promise.resolve(new Response(body, { status: 200, headers: { "content-type": "text/html" } })),
+    async () => {
+      const fetcher = new Fetcher({ ...options, maxBytes: 10_000 });
+      const lowered = await fetcher.fetch("https://site.test/big", {}, { maxBytes: 2_000 });
+      assert.equal(lowered.body.length, 2_000);
+      assert.equal(lowered.truncated, true);
+      const raised = await fetcher.fetch("https://site.test/big", {}, { maxBytes: 999_999 });
+      assert.equal(raised.body.length, 10_000, "the configured cap still applies");
+    },
+  );
+});
+
 void test("fetch leaves an under-cap body intact and keeps its validators", async () => {
   await withFetch(
     () =>

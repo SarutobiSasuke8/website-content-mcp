@@ -10,9 +10,23 @@
 - [x] Make dogfood `--help` exit without fetching and reject unknown/missing CLI arguments.
 - [ ] Complete release review and the 30-day operational record. Two runs on one day do not satisfy that gate.
 
-Near-term items for website-content-mcp, roughly in order.
+Near-term items for website-content-mcp, roughly in order. Work that makes the tool useful every week comes first; distribution follows.
 
-## 1. Publish the MCP Registry entry
+## 1. Watcher, diffs and change evidence (built, awaiting review)
+
+- [x] Companion watcher CLI under `scripts/watcher/` with a YAML or JSON watchlist, snapshots, Markdown change reports, `--dry-run` and exit codes. See [`docs/watcher.md`](./docs/watcher.md). This replaces the old "pairing guide" idea with a working reference workflow.
+- [x] `content_diff` with a bounded snapshot store, `content_extract_facts`, `content_site_health` and an optional multi-site allowlist.
+- [x] Opt-in Obsidian vault feed with append-only report notes and inbox task lines.
+- [ ] Owner review of the 0.4.0 changes and the seeded watchlist.
+- [ ] Owner approval of the weekly scheduled run proposed in `docs/watcher.md`.
+
+## 2. Use it for a month and tighten it
+
+- [ ] Run the weekly watch for four weeks and note false positives (noisy pages, unstable selectors) in the PR or a follow-up issue.
+- [ ] Add per-page ignore patterns if date or counter noise slips past the built-in masking.
+- [ ] Decide whether a competitor-page sweep from the vault's competitor scans should feed the watchlist automatically.
+
+## 3. Publish the MCP Registry entry
 
 `server.json` already declares `io.github.SarutobiSasuke8/website-content-mcp`
 against the official registry schema, but the entry has never been published.
@@ -20,14 +34,14 @@ The sibling project jobscout-mcp is registered, so the account-level setup is
 proven. Remaining work: run `mcp-publisher` against this repo's `server.json`
 (the GitHub auth step for `mcp-publisher login` has to be done by the owner).
 
-## 2. Automate registry publish in the release workflow
+## 4. Automate registry publish in the release workflow
 
 Once the entry exists, extend `.github/workflows/release.yml` to publish the
 updated `server.json` to the MCP Registry after the npm publish succeeds, so
 the registry version can never drift from npm. The workflow already verifies
 that `server.json` matches `package.json` before publishing.
 
-## 3. Keep the astraeus.ie reference deployment verified
+## 5. Keep the astraeus.ie reference deployment verified
 
 The public read-only reference deployment at `https://mcp.astraeus.ie/mcp` is
 live. Keep it in the release verification set and document the public endpoint
