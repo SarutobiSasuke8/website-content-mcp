@@ -10,6 +10,9 @@
     "cacheTtlSeconds": 3600,
     "configuredPages": 0,
     "lastRefreshAt": null,
+    "siteAllowlist": [
+      "127.0.0.1:3298"
+    ],
     "sitemapUrl": "http://127.0.0.1:3298/sitemap.xml",
     "status": "ok"
   }

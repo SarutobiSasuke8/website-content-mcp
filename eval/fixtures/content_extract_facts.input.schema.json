@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "refresh": {
+      "default": false,
+      "description": "Bypass the cache TTL and revalidate against the origin.",
+      "type": "boolean"
+    },
+    "site": {
+      "description": "Optional site (host or origin) from the operator's site allowlist. Defaults to the configured base site. Anything else is refused.",
+      "maxLength": 253,
+      "minLength": 1,
+      "type": "string"
+    },
+    "url": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "type": "object"
+}

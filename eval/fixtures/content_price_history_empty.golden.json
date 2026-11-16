@@ -1,0 +1,10 @@
+{
+  "history": {
+    "available": false,
+    "latest": [],
+    "note": "No price history is stored for this URL. It is recorded when content_diff or the watcher sees a page with plan cards whose prices changed or appeared.",
+    "points": [],
+    "truncated": false,
+    "url": "http://127.0.0.1:3298/pricing.html"
+  }
+}
