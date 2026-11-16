@@ -90,5 +90,11 @@
     "tsx": "4.20.6",
     "typescript": "5.9.3",
     "typescript-eslint": "8.66.0"
+  },
+  "overrides": {
+    "@sarutobi-sasuke/mcp-eval-harness": {
+      "@modelcontextprotocol/server": "$@modelcontextprotocol/server",
+      "zod": "$zod"
+    }
   }
 }
