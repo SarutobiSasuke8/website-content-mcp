@@ -11,7 +11,7 @@ import { createRuntime } from "./runtime.js";
 import { createContentMcpServer } from "./server.js";
 
 import type { McpServer } from "@modelcontextprotocol/server";
-import type { ErrorRequestHandler } from "express";
+import type { ErrorRequestHandler, Request, Response } from "express";
 
 const config = loadConfig();
 const { service } = createRuntime(config);
@@ -36,10 +36,48 @@ app.get("/healthz", (_request, response) => {
   response.json({ status: "ok", service: "website-content-mcp" });
 });
 
+app.get("/robots.txt", (_request, response) => {
+  response.setHeader("X-Robots-Tag", "noindex");
+  response.type("text/plain").send("User-agent: *\nDisallow: /\n");
+});
+
+function isPlainBrowserGet(request: Request): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const accept = request.headers.accept ?? "";
+  return !accept.includes("text/event-stream");
+}
+
+function sendPlainMcpInfo(request: Request, response: Response): void {
+  response.setHeader("X-Robots-Tag", "noindex, nofollow");
+  if (request.method === "HEAD") {
+    response.status(200).end();
+    return;
+  }
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Website Content MCP</title>
+</head>
+<body>
+  <h1>Website Content MCP</h1>
+  <p>This is a Streamable HTTP <strong>MCP endpoint for MCP clients</strong> (Claude, ChatGPT connectors, and other MCP-aware tools). It is not a human web page.</p>
+  <p>MCP clients must send <code>Accept: text/event-stream</code> (or the appropriate Streamable HTTP headers) and use POST for initialize / tools calls.</p>
+  <p>Human readers: see <a href="https://astraeus.ie/">https://astraeus.ie/</a> and <a href="https://astraeus.ie/llms.txt">https://astraeus.ie/llms.txt</a>.</p>
+</body>
+</html>`;
+  response.status(200).type("html").send(html);
+}
+
 app.all("/mcp", createIpRateLimitMiddleware({
   windowMs: config.httpRateLimitWindowMs,
   maxRequests: config.httpRateLimitMaxRequests,
 }), async (request, response) => {
+  if (isPlainBrowserGet(request)) {
+    sendPlainMcpInfo(request, response);
+    return;
+  }
   const mcpServer = createContentMcpServer(service, serverOptions);
   const transport = new NodeStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
