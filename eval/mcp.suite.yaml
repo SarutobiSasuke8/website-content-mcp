@@ -30,7 +30,11 @@ contracts:
       - content_health
       - content_list_pages
       - content_get_page
+      - content_extract_facts
       - content_refresh
+      - content_site_health
+      - content_price_history
+      - content_diff
       - content_search
       - content_get_sitemap
     exact: true
@@ -40,6 +44,10 @@ contracts:
       content_health: fixtures/content_health.input.schema.json
       content_list_pages: fixtures/content_list_pages.input.schema.json
       content_get_page: fixtures/content_get_page.input.schema.json
+      content_extract_facts: fixtures/content_extract_facts.input.schema.json
+      content_site_health: fixtures/content_site_health.input.schema.json
+      content_price_history: fixtures/content_price_history.input.schema.json
+      content_diff: fixtures/content_diff.input.schema.json
       content_refresh: fixtures/content_refresh.input.schema.json
       content_search: fixtures/content_search.input.schema.json
       content_get_sitemap: fixtures/content_get_sitemap.input.schema.json
@@ -73,6 +81,15 @@ contracts:
         path: fixtures/content_get_page.golden.json
         ignore_paths: [page.fetchedAt]
 
+  # Structured facts are read from the saved fixture page, so they are stable.
+  - name: extract_facts_golden
+    tool: content_extract_facts
+    input: { url: "/pricing.html" }
+    assert:
+      golden:
+        path: fixtures/content_extract_facts.golden.json
+        ignore_paths: [page.fetchedAt]
+
   - name: refresh_golden
     tool: content_refresh
     input: { limit: 10 }
@@ -88,7 +105,40 @@ contracts:
         path: fixtures/content_search.golden.json
         ignore_paths: [last_refresh_at]
 
+  # content_diff: first sight stores a baseline and reports no change; the repeat is unchanged.
+  # Times and hashes of the stored version vary only by time, so they are left out.
+  - name: diff_first_seen_golden
+    tool: content_diff
+    input: { url: "/about.html" }
+    assert:
+      golden:
+        path: fixtures/content_diff_first_seen.golden.json
+        ignore_paths: [diff.new.fetchedAt]
+
+  - name: diff_repeat_is_unchanged
+    tool: content_diff
+    input: { url: "/about.html" }
+    assert:
+      golden:
+        path: fixtures/content_diff_unchanged.golden.json
+        ignore_paths: [diff.new.fetchedAt, diff.old.fetchedAt, diff.summary]
+
+  # Price history never touches the network; a page that was never compared has none.
+  - name: price_history_empty_golden
+    tool: content_price_history
+    input: { url: "/pricing.html" }
+    assert:
+      golden:
+        path: fixtures/content_price_history_empty.golden.json
+
   # Deny and fail-closed paths.
+  - name: deny_site_not_on_allowlist
+    tool: content_get_page
+    input: { url: "/", site: "example.com" }
+    assert:
+      is_error: true
+      error_message: "not on the site allowlist"
+
   - name: deny_off_host_url
     tool: content_get_page
     input: { url: "https://example.com/" }

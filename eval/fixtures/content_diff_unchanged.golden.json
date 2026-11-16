@@ -1,0 +1,18 @@
+{
+  "diff": {
+    "baselineStored": false,
+    "changed": false,
+    "freshness": "fresh-cache",
+    "new": {
+      "contentHash": "6fa4d0c397abe9e55ffc4f1bb31e8ae06805dcaaf3a76255c5e72fb4e7fc2847",
+      "title": "About Fixture Bakery"
+    },
+    "old": {
+      "contentHash": "6fa4d0c397abe9e55ffc4f1bb31e8ae06805dcaaf3a76255c5e72fb4e7fc2847",
+      "title": "About Fixture Bakery"
+    },
+    "sourceTrust": "untrusted-web-content",
+    "status": "unchanged",
+    "url": "http://127.0.0.1:3298/about.html"
+  }
+}

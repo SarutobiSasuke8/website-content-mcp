@@ -12,6 +12,12 @@
       "maximum": 500,
       "minimum": 1,
       "type": "integer"
+    },
+    "site": {
+      "description": "Optional site (host or origin) from the operator's site allowlist. Defaults to the configured base site. Anything else is refused.",
+      "maxLength": 253,
+      "minLength": 1,
+      "type": "string"
     }
   },
   "type": "object"
