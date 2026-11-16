@@ -93,7 +93,26 @@ function productOf(node: Record<string, unknown>): ProductData | undefined {
   return product;
 }
 
-function extractProducts(doc: Document): ProductData[] {
+/** Distinct schema.org types declared in JSON-LD, in order of first appearance. */
+export function extractSchemaTypes(doc: Document): string[] {
+  const types: string[] = [];
+  for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
+    const source = script.textContent?.trim();
+    if (!source) continue;
+    try {
+      for (const node of jsonLdNodes(JSON.parse(source) as unknown)) {
+        for (const type of typesOf(node["@type"])) {
+          if (!types.includes(type)) types.push(type);
+        }
+      }
+    } catch {
+      // Invalid JSON-LD is ignored.
+    }
+  }
+  return types;
+}
+
+export function extractProducts(doc: Document): ProductData[] {
   const products: ProductData[] = [];
   for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
     if (products.length >= MAX_PRODUCTS) break;

@@ -3,7 +3,72 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-07 (unreleased candidate)
+
+This section combines the previously staged 0.4.0 notes (below, under "Earlier
+0.4.0 notes") with the work added since. Nothing here has been published.
+
+### Added
+
+- `content_diff`: compare a page with the version stored by the previous call
+  and return whether it changed, old and new hashes and fetch times, a bounded
+  line diff and a deterministic one-line summary. First sight, unchanged, `304`
+  and stale-on-error are reported explicitly. Backed by a bounded snapshot store
+  (`SNAPSHOT_DIR`, `SNAPSHOT_RETENTION_DAYS`, `SNAPSHOT_MAX_ENTRIES`,
+  `SNAPSHOT_MAX_MARKDOWN_CHARS`). Exposed only where refresh is allowed.
+- `content_extract_facts`: bounded structured facts (title, description,
+  canonical, outline, calls to action, pricing signals, schema.org types and
+  Product/Offer data, dated index items). Unknown values are omitted.
+- `content_site_health`: a bounded, polite health check of sitemap pages and
+  internal links, grouped by severity. Exposed only where refresh is allowed.
+- `SITE_ALLOWLIST` and an optional `site` argument on the page, list, sitemap,
+  search and refresh tools. Robots rules, cache scope, search scope, refresh
+  time and request pacing are per site.
+- `website-content-watcher`, a companion command line tool with a YAML or JSON
+  watchlist, snapshots, Markdown change reports, `--dry-run`, exit codes and an
+  opt-in Obsidian vault feed. See `docs/watcher.md`.
+- Health output now lists `siteAllowlist`; list, sitemap and refresh results
+  name the `site` they describe.
+
+### Added in the second round
+
+- `content_price_history` reads a stored, bounded series of plan prices per page. The watcher writes it and exports it as CSV (`history` command).
+- Plan-level price model in `content_extract_facts` (`pricingTable`): plan name, price or range, currency, billing period, per-unit basis, free and trial flags, features, further rates and promotion banners, plus a per-month equivalent. Plans are matched across runs so a rename is a rename.
+- Watchlist options: `watch` (pricing, blog, changelog, careers, integrations, security), `focus`, `ignore`, `confirm-runs`, `price-threshold-pct` and `render`.
+- Severity (high, medium, low) on every change. Only high and medium create inbox tasks.
+- Typed competitor events: `new_post`, `new_release`, `new_role`, `role_closed`, `hiring_surge`, `integration_added`, `integration_removed`, `certification_added`, `certification_removed`, `positioning_changed`.
+- `compare` (a living competitor comparison note) and `digest` (a deterministic weekly summary) commands, backed by `events.jsonl` and `runs.jsonl` logs.
+- Optional page rendering through the optional peer dependency `playwright-core` (off by default, empty profile, same-site requests only, 30 second limit).
+
+### Fixed in the second round
+
+- A single 5xx, 429, timeout or access refusal is no longer treated as page removal. Such a page is unavailable for that run and its baseline is untouched. Only HTTP 404 or 410 seen twice in one run counts as removal. A 5xx or 429 also no longer overwrites a good cache entry.
+- Page text can no longer inject Tasks-plugin fields, tags, comments, maths or mentions into inbox tasks or notes, and task lines are length capped.
+- A `site` argument written as `http://...` is fetched over https, plain http is refused for every site except the base site, and redirects from https to http are refused.
+- Sitemaps and nested sitemaps only contribute pages of the site they were requested for.
+- `content_site_health` has an overall time limit and a per-fetch size cap.
+- The same change is written once per run, and a price that returns to an earlier value creates a new task unless an unticked one for it exists.
+
+### Changed
+
+- Request pacing is now per host instead of one global interval. A request to
+  one site no longer waits for another site's interval.
+- Redirects to a different site are refused, even when that site is allowlisted,
+  so a target's robots.txt rules can never be skipped. Redirects between the
+  `www` and bare form of one host still work.
+- `content_search` searches the selected site only (the base site by default)
+  instead of every cached page.
+- The contract suite covers the three new tools and the `site` argument.
+
+### Documentation
+
+- SECURITY.md states the proxy trust boundary and that the client IP is used
+  only for the inbound rate limit. The `proxy-addr` advisory
+  GHSA-jqcg-44mw-7w3h is already resolved by the locked 2.0.8.
+- README and ROADMAP describe the new tools and put useful work ahead of
+  distribution.
+
+## Earlier 0.4.0 notes
 
 ### Added
 
@@ -26,8 +91,6 @@ All notable changes to this project are documented here. This project follows
 
 - Document refresh cadence, per-IP limits, trusted proxy configuration and the
   recommended production timeouts.
-
-## [0.4.0] — 2026-08-28
 
 ### Security
 
