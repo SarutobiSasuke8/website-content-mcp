@@ -86,6 +86,8 @@ This section combines the previously staged 0.4.0 notes (below, under "Earlier
   initialization and their first tool request; align the nginx example timeout.
 - Describe `content_refresh` only in modes where that tool is exposed.
 - Revalidate expired page cache entries on reads and cover the TTL boundary.
+- Update `@modelcontextprotocol/express` 2.0.0 to 2.0.2, clearing the last two
+  moderate `npm audit` findings on a fresh install (GHSA-rvq5-wwqv-78pq).
 
 ### Documentation
 
